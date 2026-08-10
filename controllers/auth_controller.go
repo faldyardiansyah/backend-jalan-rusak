@@ -40,10 +40,10 @@ func Register(c *gin.Context) {
 	}
 
 	user := models.User{
-		Name:  input.Nama,
-		Email: input.Email,
+		Name:     input.Nama,
+		Email:    input.Email,
 		Password: string(hashedPassword),
-		Role:     "warga",
+		Role:     models.RoleWarga,
 	}
 
 	if err := config.DB.Create(&user).Error; err != nil {
@@ -55,15 +55,15 @@ func Register(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, gin.H{
 		"message": "Registrasi berhasil",
-		"data" : gin.H{
-			"nama": user.Name,
+		"data": gin.H{
+			"nama":  user.Name,
 			"email": user.Email,
-			"role": user.Role,
+			"role":  user.Role,
 		},
 	})
 }
 
-func Login(c *gin.Context){
+func Login(c *gin.Context) {
 	var input LoginInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -87,7 +87,7 @@ func Login(c *gin.Context){
 		return
 	}
 
-	// baut token 
+	// baut token
 	token, err := utils.GenerateToken(user.ID, user.Email, user.Role)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -97,15 +97,15 @@ func Login(c *gin.Context){
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message" : "Login berhasil",
-		"token"   : token,
+		"message": "Login berhasil",
+		"token":   token,
 		"user": gin.H{
-			"id" : user.ID,
-			"nama" : user.Name,
-			"email" : user.Email,
-			"role" : user.Role,
-			"domisili": user.Domisili,
-			"profil_photo" : user.ProfilePhoto,
+			"id":           user.ID,
+			"nama":         user.Name,
+			"email":        user.Email,
+			"role":         user.Role,
+			"wilayah_id":   user.WilayahID,
+			"profil_photo": user.ProfilePhoto,
 		},
 	})
 }

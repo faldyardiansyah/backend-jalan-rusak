@@ -51,12 +51,15 @@ func ConnectDatabase(){
 		&models.User{},
 		&models.LaporanKerusakan{},
 		&models.RiwayatChat{},
+		&models.Wilayah{},
+		&models.Notifikasi{},
 	)
 
 	if err != nil {
 		log.Fatalf("Gagal melakukan migrasi ke database: %v", err)
 	}
 
+	seeders.SeedWilayah(DB)
 	seeders.SeedUser(DB)
 
 	log.Println("Berhasil terhubung ke datasebase MySQL & migrasinya sukses serta data seeder berhasil dijalankan")

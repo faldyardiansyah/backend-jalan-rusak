@@ -5,17 +5,19 @@ import (
 	"os"
 	"time"
 
+	"backend-jalan-rusak/models"
 	"github.com/golang-jwt/jwt/v5"
 )
 
 type JWTClaim struct {
 	UserID   uint   `json:"user_id"`
 	Email    string `json:"email"`
-	Role     string `json:"role"`
+	Role     models.UserRole `json:"role"`
+	WilayahID  *uint  `json:"wilayah_id"`
 	jwt.RegisteredClaims
 }
 
-func GenerateToken(userID uint, email, role string) (string, error) {
+func GenerateToken(userID uint, email, role, WilayahID string) (string, error) {
 	secretKey := []byte(os.Getenv("JWT_SECRET_KEY"))
 	if len(secretKey) == 0 {
 		secretKey = []byte("rahasia_default_banget")
@@ -32,6 +34,7 @@ func GenerateToken(userID uint, email, role string) (string, error) {
 		UserID: userID,
 		Email: email,
 		Role: role,
+		WilayahID: wilayahID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(expTime)),
 			IssuedAt: jwt.NewNumericDate(time.Now()),

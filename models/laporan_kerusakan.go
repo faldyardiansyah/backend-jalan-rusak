@@ -8,6 +8,9 @@ type LaporanKerusakan struct {
 	gorm.Model
 	UserID        uint    `json:"user_id" gorm:"not null"`
 	User          User    `json:"user" gorm:"foreignKey:UserID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+	WilayahID     uint    `json:"wilayah_id" gorm:"not null"` 
+	Wilayah       Wilayah `json:"wilayah" gorm:"foreignKey:WilayahID"`
+	JenisJalan    string  `json:"jenis_jalan" gorm:"type:varchar(50);not null"` 
 	Judul         string  `json:"judul" gorm:"type:varchar(150);not null"`
 	Deskripsi     string  `json:"deskripsi" gorm:"type:text;not null"`
 	Latitude      float64 `json:"latitude" gorm:"not null"`
@@ -17,5 +20,5 @@ type LaporanKerusakan struct {
 	Status        string  `json:"status" gorm:"type:varchar(50);default:'menunggu';not null"`
 	DitugaskanKe  string  `json:"ditugaskan_ke" gorm:"type:varchar(150)"`
 	FotoBukti     string  `json:"foto_bukti" gorm:"type:text"`
-	CatatanAdmin  string  `json:"catatan_admin" gorm:"type:text"`
+	CatatanAdmin  string  `json:"catatan_admin" gorm:"type:text"` // fix typo lama "catataSn_admin"
 }
