@@ -12,7 +12,8 @@ import (
 func GetMapLaporan(c *gin.Context) {
 	roleVal, _ := c.Get("role")
 	userIDVal, _ := c.Get("user_id")
-	role := roleVal.(models.UserRole)
+
+	role := roleVal.(string)
 	userID := userIDVal.(uint)
 
 	type MapPoint struct {
@@ -32,7 +33,8 @@ func GetMapLaporan(c *gin.Context) {
 
 	var mapPoints []MapPoint
 
-	query := config.DB.Table("laporan_kerusakan").
+	query := config.DB.
+		Table("laporan_kerusakan").
 		Select(`
 			laporan_kerusakan.id,
 			laporan_kerusakan.judul,
@@ -44,22 +46,71 @@ func GetMapLaporan(c *gin.Context) {
 			laporan_kerusakan.image_url,
 			laporan_kerusakan.foto_bukti,
 			laporan_kerusakan.catatan_admin,
-			users.name,
+			user.name,
 			laporan_kerusakan.wilayah_id
-		`).Joins("JOIN user ON user.id = laporan_kerusakan.user_id").
-		Where("laporan_kerusakan.delete_at IS NULL")
+		`).
+		Joins("JOIN user ON user.id = laporan_kerusakan.user_id").
+		Where("laporan_kerusakan.deleted_at IS NULL")
 
-		if role == "models.RoleAdminPemdes" {
-			var adminUser models.User
-			config.DB.First(&adminUser, userID)
+	// Admin Pemdes hanya melihat laporan
+	// sesuai wilayahnya dan jenis jalan desa
+	if role == string(models.RoleAdminPemdes) {
+		var adminUser models.User
 
-			if adminUser.WilayahID == nil {
-				c.JSON(http.StatusForbidden, gin.H{
-					"error" : "Akun admin ini belom di set wilayahnya",
-				})
-				return 
-			}
-
-			query = query 
+		if err := config.DB.First(&adminUser, userID).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{
+				"status":  "error",
+				"message": "Data admin tidak ditemukan",
+			})
+			return
 		}
+
+		if adminUser.WilayahID == nil {
+			c.JSON(http.StatusForbidden, gin.H{
+				"status":  "error",
+				"message": "Akun admin ini belum di-set wilayahnya",
+			})
+			return
+		}
+
+		query = query.Where(
+			"laporan_kerusakan.wilayah_id = ? AND laporan_kerusakan.jenis_jalan = ?",
+			*adminUser.WilayahID,
+			"desa",
+		)
+	}
+
+	// Admin PU dan Super Admin tidak difilter berdasarkan wilayah
+
+	// Filter berdasarkan jenis jalan jika dikirim
+	if jenisJalan := c.Query("jenis_jalan"); jenisJalan != "" {
+		query = query.Where(
+			"laporan_kerusakan.jenis_jalan = ?",
+			jenisJalan,
+		)
+	}
+
+	// Filter berdasarkan status jika dikirim
+	if status := c.Query("status"); status != "" {
+		query = query.Where(
+			"laporan_kerusakan.status = ?",
+			status,
+		)
+	}
+
+	// Ambil data laporan
+	if err := query.Scan(&mapPoints).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Gagal mengambil data laporan untuk peta",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"total":  len(mapPoints),
+		"data":   mapPoints,
+	})
 }

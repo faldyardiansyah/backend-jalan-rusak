@@ -26,31 +26,31 @@ func GetAllLaporan(c *gin.Context) {
 	offset := (page - 1) * limit
 
 	var listLaporan []models.LaporanKerusakan
-	var totalLaporan int64
+	var totalData int64
 
 	query := config.DB.Model(&models.LaporanKerusakan{}).
 			Preload("User").
-			Joins("JOIN users ON users.id = laporan_kerusakans.user_id").
-			Where("laporan_kerusakan.delete_at IS NULL")
+			Joins("JOIN user ON user.id = laporan_kerusakan.user_id").
+			Where("laporan_kerusakan.deleted_at IS NULL")
 
 	if role == "admin_pemdes" {
 		var adminUser models.User
 		config.DB.First(&adminUser, userID)
-		query = query.Where("users.domisili = ?", adminUser.Domisili)
+		query = query.Where("user.wilayah_id = ?", adminUser.WilayahID)
 	}
 
 	if statusFilter != "" {
-		query = query.Where("laporan_kerusakans.status = ?", statusFilter)
+		query = query.Where("laporan_kerusakan.status = ?", statusFilter)
 	}
 
 	if searchKeyword != "" {
 		likePattern := "%" + searchKeyword + "%"
-		query = query.Where("laporan_kerusakans.judul LIKE ? OR laporan_kerusakans.deskripsi LIKE ? OR users.name LIKE ?", likePattern, likePattern, likePattern)
+		query = query.Where("laporan_kerusakan.judul LIKE ? OR laporan_kerusakan.deskripsi LIKE ? OR user.name LIKE ?", likePattern, likePattern, likePattern)
 	}
 
 	query.Count(&totalData)
 
-	err := query.Order("laporan_kerusakans.created_at DESC").
+	err := query.Order("laporan_kerusakan.created_at DESC").
 		Limit(limit).
 		Offset(offset).
 		Find(&listLaporan).Error

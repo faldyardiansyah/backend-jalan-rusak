@@ -11,27 +11,37 @@ import (
 
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+
 		authHeader := c.GetHeader("Authorization")
+
 		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "Unauthorized",
+			})
 			c.Abort()
 			return
 		}
 
-		// ini itu untuk memotong Bearernya untuk mengambil JWT
+		// Memotong Bearer untuk mengambil JWT
 		tokenString := strings.Replace(authHeader, "Bearer ", "", 1)
 
-		// buat validasi token
+		// Validasi token
 		claims, err := utils.ValidateToken(tokenString)
+
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error":"Token tidak valid atau kadaluarsa"})
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "Token tidak valid atau kadaluarsa",
+			})
 			c.Abort()
 			return
 		}
 
 		c.Set("user_id", claims.UserID)
 		c.Set("email", claims.Email)
-		c.Set("role", claims.Role)
+
+
+		c.Set("role", string(claims.Role))
+
 		c.Next()
 	}
 }

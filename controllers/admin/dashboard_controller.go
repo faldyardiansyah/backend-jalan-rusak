@@ -7,49 +7,71 @@ import (
 	"backend-jalan-rusak/models"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func GetDashboardStats(c *gin.Context) {
 	roleVal, _ := c.Get("role")
 	userIDVal, _ := c.Get("user_id")
+
 	role := roleVal.(string)
 	userID := userIDVal.(uint)
 
-	var totalLaporan, totalMenunggu, totalProses, totalSelesai, totalDitolak int64
+	var totalLaporan int64
+	var totalMenunggu int64
+	var totalProses int64
+	var totalSelesai int64
+	var totalDitolak int64
 
-	baseQuery := config.DB.Model(&models.LaporanKerusakan{}).
-		joins({"JOIN users ON users.id = laporan_kerusakan.user_id"}).
-		Where("laporan_kerusakan.delete_at IS NULL")
-	
-	if role == "admin_pemdes" {
+	baseQuery := config.DB.
+		Model(&models.LaporanKerusakan{}).
+		Where("laporan_kerusakan.deleted_at IS NULL")
+
+	if role == string(models.RoleAdminPemdes) {
 		var adminUser models.User
-		config.DB.First(&adminUser, userID)
-		baseQuery = baseQuery.Where("users.domisili = ?", adminUser.Domisili)
+
+		if err := config.DB.First(&adminUser, userID).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{
+				"status":  "error",
+				"message": "Data admin tidak ditemukan",
+			})
+			return
+		}
+
+		if adminUser.WilayahID == nil {
+			c.JSON(http.StatusForbidden, gin.H{
+				"status":  "error",
+				"message": "Admin Pemdes belum memiliki wilayah",
+			})
+			return
+		}
+
+		baseQuery = baseQuery.Where(
+			"laporan_kerusakan.wilayah_id = ? AND laporan_kerusakan.jenis_jalan = ?",
+			*adminUser.WilayahID,
+			"desa",
+		)
 	}
 
 	baseQuery.Count(&totalLaporan)
 
-	config.DB.Model(&models.LaporanKerusakan{}).
-		joins({"JOIN users ON users.id = laporan_kerusakan.user_id"}).
-		Where("laporan_kerusakan.delete_at IS NULL").
+	queryMenunggu := baseQuery.Session(&gorm.Session{})
+	queryMenunggu.
 		Where("laporan_kerusakan.status = ?", "menunggu").
 		Count(&totalMenunggu)
 
-	config.DB.Model(&models.LaporanKerusakan{}).
-		joins({"JOIN users ON users.id = laporan_kerusakan.user_id"}).
-		Where("laporan_kerusakan.delete_at IS NULL").
+	queryProses := baseQuery.Session(&gorm.Session{})
+	queryProses.
 		Where("laporan_kerusakan.status = ?", "proses").
 		Count(&totalProses)
 
-	config.DB.Model(&models.LaporanKerusakan{}).
-		joins({"JOIN users ON users.id = laporan_kerusakan.user_id"}).
-		Where("laporan_kerusakan.delete_at IS NULL").
+	querySelesai := baseQuery.Session(&gorm.Session{})
+	querySelesai.
 		Where("laporan_kerusakan.status = ?", "selesai").
 		Count(&totalSelesai)
-	
-	config.DB.Model(&models.LaporanKerusakan{}).
-		joins({"JOIN users ON users.id = laporan_kerusakan.user_id"}).
-		Where("laporan_kerusakan.delete_at IS NULL").
+
+	queryDitolak := baseQuery.Session(&gorm.Session{})
+	queryDitolak.
 		Where("laporan_kerusakan.status = ?", "ditolak").
 		Count(&totalDitolak)
 
@@ -57,11 +79,11 @@ func GetDashboardStats(c *gin.Context) {
 		"status":  "success",
 		"message": "Dashboard stats berhasil diambil",
 		"data": gin.H{
-			"total_laporan": totalLaporan,
+			"total_laporan":  totalLaporan,
 			"total_menunggu": totalMenunggu,
-			"total_proses": totalProses,
-			"total_selesai": totalSelesai,
-			"total_ditolak": totalDitolak,
+			"total_proses":   totalProses,
+			"total_selesai":  totalSelesai,
+			"total_ditolak":  totalDitolak,
 		},
 	})
 }

@@ -2,24 +2,24 @@ package main
 
 import (
 	"backend-jalan-rusak/config"
-	
+	"backend-jalan-rusak/routes"
+
 	"github.com/gin-gonic/gin"
 )
 
-func main() {
-
-	// buat ngehubungin databasenya
+func main(){
 	config.ConnectDatabase()
 	config.InitCloudinary()
 
 	r := gin.Default()
 
-	r.GET("/ping", func(ctx *gin.Context) {
-		ctx.JSON(200, gin.H{
-			"status":  "success",
-			"message": "Backend Go Gin untuk Laporan Jalan Rusak siap digunakan!",
+	r.GET("/ping", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"message": "pong",
 		})
 	})
+
+	routes.SetupRoutes(r)
 
 	r.Run()
 }

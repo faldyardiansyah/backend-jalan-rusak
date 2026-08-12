@@ -12,35 +12,39 @@ import (
 )
 
 type ChatResponse struct {
-	ID                 uint         `json:"id"`
-	LaporanKerusakanID uint         `json:"laporan_kerusakan_id"`
-	UserID             uint         `json:"user_id"`
-	User               models.User  `json:"user"`
-	Pesan              string       `json:"pesan"`
-	WaktuKirim         string       `json:"waktu_kirim"` // <--- Hari, Tgl, Jam Indonesia
-	AdminID            *uint        `json:"admin_id"`
+	ID                 uint          `json:"id"`
+	LaporanKerusakanID uint          `json:"laporan_kerusakan_id"`
+	UserID             uint          `json:"user_id"`
+	User               models.User   `json:"user"`
+	Pesan              string        `json:"pesan"`
+	WaktuKirim         string        `json:"waktu_kirim"`
+	AdminID            *uint         `json:"admin_id"`
 	Admin              *models.User `json:"admin,omitempty"`
-	Balasan            *string      `json:"balasan"`
-	WaktuBalas         string       `json:"waktu_balas"` // <--- Hari, Tgl, Jam Indonesia
+	Balasan            *string       `json:"balasan"`
+	WaktuBalas         string        `json:"waktu_balas"`
 }
 
-// Helper untuk mengonversi Model RiwayatChat ke ChatResponse
 func FormatChatToResponse(chat models.RiwayatChat) ChatResponse {
+	waktuBalas := ""
+
+	if chat.DibalasAt != nil {
+		waktuBalas = utils.FormatTanggalIndo(chat.DibalasAt)
+	}
+
 	return ChatResponse{
 		ID:                 chat.ID,
 		LaporanKerusakanID: chat.LaporanKerusakanID,
 		UserID:             chat.UserID,
 		User:               chat.User,
 		Pesan:              chat.Pesan,
-		WaktuKirim:         utils.FormatTanggalIndo(&chat.CreatedAt, "Asia/Jakarta"),
+		WaktuKirim:         utils.FormatTanggalIndo(&chat.CreatedAt),
 		AdminID:            chat.AdminID,
 		Admin:              chat.Admin,
 		Balasan:            chat.Balasan,
-		WaktuBalas:         utils.FormatTanggalIndo(chat.DibalasAt, "Asia/Jakarta"),
+		WaktuBalas:         waktuBalas,
 	}
 }
 
-// 1. GET /api/laporan/:id/chat -> Ambil riwayat chat 1 laporan
 func GetChatByLaporanID(c *gin.Context) {
 	laporanID := c.Param("id")
 
@@ -50,7 +54,7 @@ func GetChatByLaporanID(c *gin.Context) {
 		Preload("User").
 		Preload("Admin").
 		Where("laporan_kerusakan_id = ?", laporanID).
-		Order("created_at asc").
+		Order("created_at ASC").
 		Find(&listChat).Error
 
 	if err != nil {
@@ -62,6 +66,7 @@ func GetChatByLaporanID(c *gin.Context) {
 	}
 
 	var responseData []ChatResponse
+
 	for _, item := range listChat {
 		responseData = append(responseData, FormatChatToResponse(item))
 	}
@@ -73,10 +78,18 @@ func GetChatByLaporanID(c *gin.Context) {
 	})
 }
 
-// 2. POST /api/laporan/:id/chat -> Warga kirim pesan/pertanyaan
 func SendPesanWarga(c *gin.Context) {
 	laporanID := c.Param("id")
-	userIDVal, _ := c.Get("user_id")
+
+	userIDVal, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"message": "User ID tidak ditemukan",
+		})
+		return
+	}
+
 	userID := userIDVal.(uint)
 
 	var input struct {
@@ -92,6 +105,7 @@ func SendPesanWarga(c *gin.Context) {
 	}
 
 	var laporan models.LaporanKerusakan
+
 	if err := config.DB.First(&laporan, laporanID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"status":  "error",
@@ -114,7 +128,9 @@ func SendPesanWarga(c *gin.Context) {
 		return
 	}
 
-	config.DB.Preload("User").First(&newChat, newChat.ID)
+	config.DB.
+		Preload("User").
+		First(&newChat, newChat.ID)
 
 	c.JSON(http.StatusCreated, gin.H{
 		"status":  "success",
@@ -123,10 +139,18 @@ func SendPesanWarga(c *gin.Context) {
 	})
 }
 
-// 3. PUT /api/admin/chat/:chat_id -> Admin mengisi balasan
 func ReplyPesanAdmin(c *gin.Context) {
 	chatID := c.Param("chat_id")
-	adminIDVal, _ := c.Get("user_id")
+
+	adminIDVal, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"message": "User ID tidak ditemukan",
+		})
+		return
+	}
+
 	adminID := adminIDVal.(uint)
 
 	var input struct {
@@ -142,6 +166,7 @@ func ReplyPesanAdmin(c *gin.Context) {
 	}
 
 	var chat models.RiwayatChat
+
 	if err := config.DB.First(&chat, chatID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"status":  "error",
@@ -151,6 +176,7 @@ func ReplyPesanAdmin(c *gin.Context) {
 	}
 
 	now := time.Now()
+
 	chat.AdminID = &adminID
 	chat.Balasan = &input.Balasan
 	chat.DibalasAt = &now
@@ -163,7 +189,10 @@ func ReplyPesanAdmin(c *gin.Context) {
 		return
 	}
 
-	config.DB.Preload("User").Preload("Admin").First(&chat, chat.ID)
+	config.DB.
+		Preload("User").
+		Preload("Admin").
+		First(&chat, chat.ID)
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",

@@ -5,7 +5,7 @@ import (
 
 	"backend-jalan-rusak/config"
 	"backend-jalan-rusak/models"
-	
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -28,7 +28,7 @@ func DeleteLaporanSpam(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"status": "success",
-		"message": "Laporan kerusakan berhasil dihapus",
+		"status":  "success",
+		"message": "Laporan '" + laporan.Judul + "' berhasil dihapus (ditandai spam)",
 	})
 }
