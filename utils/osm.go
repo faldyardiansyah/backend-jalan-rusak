@@ -5,62 +5,65 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-
-	"backend-jalan-rusak/models"
+	
 
 	"gorm.io/gorm"
+	"backend-jalan-rusak/models"
 )
 
-type osmAddress struct {
-	Village string `json:"village"`
-	Suburb  string `json:"suburb"`
-	Town    string `json:"town"`
-	Conty   string `json:"county"`
-	Road    string `json:"road"`
-}
-
 type osmResponse struct {
-	Address osmAddress `json:"address"`
+	Address struct {
+		Village string `json:"village"`
+		Suburb string `json:"suburb"`
+		Town string `json:"town"`
+	} `json:"address"`
+	Extratags struct {
+		Highway string `json:"highway"`
+	} `json:"extratags"`
 }
 
-func ReverseGeocodeOSM(lat, lng float64) (namaWilayah string, err error) {
-	url := fmt.Sprintf("https://nominatim.openstreetmap.org/reverse?lat=%f&lon=%f&format=json", lat, lng)
+func ReverseGeocodeOSM(lat, lng float64) (namaWilayah string, jenisJalan string, err error) {
+	url := fmt.Sprintf("https://nominatim.openstreetmap.org/reverse?lat=%f&lon=%f&format=json&extratags=1", lat, lng)
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err  := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	req.Header.Set("User-Agent", "Jalan-Rusak/1.0")
-
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer resp.Body.Close()
 
 	var result osmResponse
-	err = json.NewDecoder(resp.Body).Decode(&result)
-	if err != nil {
-		return "", err
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", "", err
 	}
 
 	if result.Address.Village != "" {
-		return result.Address.Village, nil
+		namaWilayah = result.Address.Village
+	} else if result.Address.Suburb != "" {
+		namaWilayah = result.Address.Suburb
+	} else if result.Address.Town != "" {
+		namaWilayah = result.Address.Town
+	} else {
+		return "", "", fmt.Errorf("wilayah tidak ditemukan")
 	}
 
-	if result.Address.Suburb != "" {
-		return result.Address.Suburb, nil
+	// ini buat otomatis tentukan jenis jalan berdasarkan osm 
+	jenisJalan = "desa" //ini buat defaultnya
+	hw := result.Extratags.Highway
+	if hw == "primary" || hw == "secondary" || hw == "tertiary" {
+		jenisJalan = "jalan"
 	}
 
-	if result.Address.Town != "" {
-		return result.Address.Town, nil
-	}
-	return "", fmt.Errorf("tidak dapat menemukan wilayah untuk koordinat (%f, %f)", lat, lng)
+	return namaWilayah, jenisJalan, nil
 }
 
-// find wilayah yang cocok
+// buat mengirim ke database
 func FindWilayahByNama(db *gorm.DB, nama string) (models.Wilayah, error) {
 	var w models.Wilayah
 	namaBersih := strings.TrimSpace(nama)

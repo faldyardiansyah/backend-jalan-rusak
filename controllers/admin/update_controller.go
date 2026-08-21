@@ -133,11 +133,18 @@ func UpdateStatusLaporan(c *gin.Context) {
 
 	//  ini itu buat notifikasi otomatis ke warga nya
 	if status != "" {
+		pesanNotif := "Laporan \"" + laporan.Judul + "\" statusnya diperbarui menjadi: " + strings.ToUpper(laporan.Status)
+
+		// ini buat si admin nulis catatan 
+		if catatanAdmin != "" {
+			pesanNotif += ". Catatan admin: " + catatanAdmin
+		}
+
 		config.DB.Create(&models.Notifikasi{
-			UserID: laporan.UserID,
+			UserID:    laporan.UserID,
 			LaporanID: laporan.ID,
-			Judul: "Status Laporan Berubah",
-			Pesan: "Status laporan Anda telah diubah menjadi " + laporan.Status,
+			Judul:     "Status Laporan Berubah",
+			Pesan:     pesanNotif,
 		})
 	}
 

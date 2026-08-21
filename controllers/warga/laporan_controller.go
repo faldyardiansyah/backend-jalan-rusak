@@ -3,6 +3,7 @@ package warga
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"backend-jalan-rusak/config"
 	"backend-jalan-rusak/models"
@@ -43,34 +44,28 @@ func FormatLaporanToResponse(lap models.LaporanKerusakan) LaporanResponse {
 
 func CreateLaporan(c *gin.Context) {
 	userIDVal, exists := c.Get("user_id")
-
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "User tidak terautentikasi",
+			"status":  "error",
+			"message": "User ID tidak ditemukan",
 		})
 		return
 	}
 
 	userID := userIDVal.(uint)
-
 	judul := c.PostForm("judul")
 	deskripsi := c.PostForm("deskripsi")
 	tipeKerusakan := c.PostForm("tipe_kerusakan")
-	jenisJalan := c.PostForm("jenis_jalan")
+
 	latStr := c.PostForm("latitude")
 	lngStr := c.PostForm("longitude")
-
-	if judul == "" || deskripsi == "" || tipeKerusakan == "" || jenisJalan == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Judul, deskripsi, tipe kerusakan, dan jenis jalan harus diisi",
-		})
-		return
-	}
+	wilayahIDStr := c.PostForm("wilayah_id")
 
 	lat, err := strconv.ParseFloat(latStr, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Latitude tidak valid",
+			"status":  "error",
+			"message": "Latitude tidak valid",
 		})
 		return
 	}
@@ -78,7 +73,8 @@ func CreateLaporan(c *gin.Context) {
 	lng, err := strconv.ParseFloat(lngStr, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Longitude tidak valid",
+			"status":  "error",
+			"message": "Longitude tidak valid",
 		})
 		return
 	}
@@ -86,46 +82,45 @@ func CreateLaporan(c *gin.Context) {
 	fileHeader, err := c.FormFile("foto")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Foto laporan wajib diunggah",
-		})
+			"error": "foto laporan wajib di unggah"})
 		return
 	}
 
 	imageURL, err := utils.UploadCloudinary(fileHeader)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Gagal mengunggah foto ke Cloudinary: " + err.Error(),
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal upload foto"})
 		return
 	}
 
+	// Ambil data cadangan dari OSM (Nama Wilayah & Deteksi Jenis Jalan)
+	namaWilayahOSM, jenisJalanOSM, errOSM := utils.ReverseGeocodeOSM(lat, lng)
+
+	// memnetukan jenis jalan
+	jenisJalan := c.PostForm("jenis_jalan")
+	if jenisJalan == "" {
+		jenisJalan = jenisJalanOSM
+	}
+	if jenisJalan == "" {
+		jenisJalan = "desa"
+	}
+
+	// memenentukan wilayah id berdasarkan inputan wilayah
 	var wilayahID uint
+	if wilayahIDStr != "" {
+		id, _ := strconv.Atoi(wilayahIDStr)
+		wilayahID = uint(id)
+	}
 
-	namaWilayah, errOSM := utils.ReverseGeocodeOSM(lat, lng)
-
-	if errOSM == nil {
-		wilayah, errFind := utils.FindWilayahByNama(config.DB, namaWilayah)
-
+	if wilayahID == 0 && errOSM == nil {
+		wilayah, errFind := utils.FindWilayahByNama(config.DB, namaWilayahOSM)
 		if errFind == nil {
 			wilayahID = wilayah.ID
 		}
 	}
 
 	if wilayahID == 0 {
-		wilayahIDStr := c.PostForm("wilayah_id")
-
-		if wilayahIDStr != "" {
-			id, err := strconv.Atoi(wilayahIDStr)
-
-			if err == nil && id > 0 {
-				wilayahID = uint(id)
-			}
-		}
-	}
-
-	if wilayahID == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Wilayah tidak ditemukan, mohon pilih wilayah secara manual di map",
+			"error": "Wilayah tidak ditemukan, mohon pilih manual nyak",
 		})
 		return
 	}
@@ -143,9 +138,13 @@ func CreateLaporan(c *gin.Context) {
 		Status:        "menunggu",
 	}
 
-	if err := config.DB.Create(&laporan).Error; err != nil {
+	// Simpan laporan ke database
+	result := config.DB.Create(&laporan)
+	if result.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Gagal menyimpan laporan ke database",
+			"status":  "error",
+			"message": "Gagal menyimpan laporan",
+			"error":   result.Error.Error(),
 		})
 		return
 	}
@@ -167,20 +166,14 @@ func CreateLaporan(c *gin.Context) {
 func KirimNotifikasiLaporanBaru(laporan models.LaporanKerusakan) {
 	var adminTujuan []models.User
 
-	switch laporan.JenisJalan {
+	switch strings.ToLower(laporan.JenisJalan) {
 	case "desa":
 		config.DB.
 			Where("role = ? AND wilayah_id = ?", models.RoleAdminPemdes, laporan.WilayahID).
 			Find(&adminTujuan)
-
 	case "kabupaten":
 		config.DB.
 			Where("role = ?", models.RoleAdminPu).
-			Find(&adminTujuan)
-
-	case "provinsi":
-		config.DB.
-			Where("role = ?", models.RoleSuperAdmin).
 			Find(&adminTujuan)
 	}
 
@@ -234,7 +227,6 @@ func GetAllLaporanPeta(c *gin.Context) {
 	config.DB.
 		Preload("User").
 		Preload("Wilayah").
-		Where("deleted_at IS NULL").
 		Find(&listLaporan)
 
 	var responseData []LaporanResponse

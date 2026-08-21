@@ -53,5 +53,6 @@ func SetupRoutes(r *gin.Engine) {
 			// superadmin.GET("/wilayah", superAdminController.GetAllWilayah)
 			superadmin.DELETE("/laporan/:id", superAdminController.DeleteLaporanSpam)
 		}
+		api.GET("/notifikasi", controllers.GetNotifikasiUser)
 	}
 }
