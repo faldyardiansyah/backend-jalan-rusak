@@ -5,6 +5,7 @@ import (
 
 	"backend-jalan-rusak/config"
 	"backend-jalan-rusak/models"
+	"backend-jalan-rusak/utils"
 
 	"github.com/gin-gonic/gin"
 )
@@ -18,6 +19,14 @@ func DeleteLaporanSpam(c *gin.Context) {
 			"error": "Laporan kerusakan tidak ditemukan",
 		})
 		return
+	}
+
+	if laporan.ImageURL != "" {
+		_ = utils.DeleteCloudinary(laporan.ImageURL)
+	}
+
+	if laporan.FotoBukti != "" {
+		_ = utils.DeleteCloudinary(laporan.FotoBukti)
 	}
 
 	if err := config.DB.Delete(&laporan).Error; err != nil {

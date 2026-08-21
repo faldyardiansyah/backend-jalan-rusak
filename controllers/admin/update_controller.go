@@ -113,6 +113,10 @@ func UpdateStatusLaporan(c *gin.Context) {
 	// ini buat upload bukti foto 
 	fileHeader, err := c.FormFile("foto_bukti")
 	if err == nil {
+		if laporan.FotoBukti != "" {
+			_ = utils.DeleteCloudinary(laporan.FotoBukti)
+		}
+
 		fotoBukti, err := utils.UploadCloudinary(fileHeader)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
