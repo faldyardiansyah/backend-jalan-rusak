@@ -122,7 +122,7 @@ func SendPesanWarga(c *gin.Context) {
 	userID := userIDVal.(uint)
 
 	var input struct {
-		pesan string `json:"pesan" binding:"required"`
+		Pesan string `json:"pesan" binding:"required"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -156,7 +156,7 @@ func SendPesanWarga(c *gin.Context) {
 	newChat := models.RiwayatChat{
 		LaporanKerusakanID: laporan.ID,
 		UserID:             userID,
-		Pesan:              input.pesan,
+		Pesan:              input.Pesan,
 	}
 
 	config.DB.Create(&newChat)

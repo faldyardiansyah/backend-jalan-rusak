@@ -17,8 +17,8 @@ type User struct {
 	gorm.Model
 	Name          string             `json:"name" gorm:"type:varchar(150);not null"`
 	Email         string             `json:"email" gorm:"type:varchar(150);unique;not null"`
-	Password      string             `json:"password" gorm:"type:varchar(150);not null"`
-	Role          UserRole             `json:"role" gorm:"type:varchar(50);default:"warga";not null"`
+	Password      string             `json:"-" gorm:"type:varchar(150);not null"`
+	Role          UserRole           `json:"role" gorm:"type:varchar(50);default:'warga';not null"`
 	WilayahID     *uint              `json:"wilayah_id" gorm:"default:null"`
 	Wilayah       Wilayah            `json:"wilayah,omitempty" gorm:"foreignKey:WilayahID"`
 	ProfilePhoto  string             `json:"profile_photo" gorm:"type:text"`
