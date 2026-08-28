@@ -54,7 +54,7 @@ func ReverseGeocodeOSM(lat, lng float64) (namaWilayah string, jenisJalan string,
 	}
 
 	// ini buat otomatis tentukan jenis jalan berdasarkan osm 
-	jenisJalan = "desa" //ini buat defaultnya
+	jenisJalan = "desa" //ini itu buat deafult pemilihan jalannya
 	hw := result.Extratags.Highway
 	if hw == "primary" || hw == "secondary" || hw == "tertiary" {
 		jenisJalan = "jalan"
