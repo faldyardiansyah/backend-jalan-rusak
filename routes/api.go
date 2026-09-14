@@ -50,7 +50,10 @@ func SetupRoutes(r *gin.Engine) {
 			superadmin.GET("/users/:id", superAdminController.ShowUser)
 			superadmin.PUT("/users/:id", superAdminController.UpdateUser)
 			superadmin.DELETE("/users/:id", superAdminController.DeleteUser)
-			// superadmin.GET("/wilayah", superAdminController.GetAllWilayah)
+			superadmin.GET("/wilayah", superAdminController.GetAllWilayah)
+			superadmin.POST("/wilayah", superAdminController.CreateWilayah)
+			superadmin.PUT("/wilayah/:id", superAdminController.UpdateWilayah)
+			superadmin.DELETE("/wilayah/:id", superAdminController.DeleteWilayah)
 			superadmin.DELETE("/laporan/:id", superAdminController.DeleteLaporanSpam)
 		}
 		api.GET("/notifikasi", controllers.GetNotifikasiUser)
