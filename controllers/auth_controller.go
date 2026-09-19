@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"net/http"
+	"strings"
 
 	"backend-jalan-rusak/config"
 	"backend-jalan-rusak/models"
@@ -31,6 +32,25 @@ func Register(c *gin.Context) {
 		return
 	}
 
+	email := strings.ToLower(strings.TrimSpace(input.Email))
+
+	// Cek apakah email sudah terdaftar
+	var count int64
+	if err := config.DB.Model(&models.User{}).
+		Where("email = ?", email).
+		Count(&count).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Terjadi kesalahan pada server",
+		})
+		return
+	}
+	if count > 0 {
+		c.JSON(http.StatusConflict, gin.H{
+			"error": "Email sudah terdaftar",
+		})
+		return
+	}
+
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -40,8 +60,8 @@ func Register(c *gin.Context) {
 	}
 
 	user := models.User{
-		Name:     input.Nama,
-		Email:    input.Email,
+		Name:     strings.TrimSpace(input.Nama),
+		Email:    email,
 		Password: string(hashedPassword),
 		Role:     models.RoleWarga,
 	}
@@ -72,8 +92,10 @@ func Login(c *gin.Context) {
 		return
 	}
 
+	email := strings.ToLower(strings.TrimSpace(input.Email))
+
 	var user models.User
-	if err := config.DB.Where("email = ?", input.Email).First(&user).Error; err != nil {
+	if err := config.DB.Where("email = ?", email).First(&user).Error; err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"error": "Email atau password salah",
 		})
@@ -87,7 +109,6 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	// baut token
 	token, err := utils.GenerateToken(user.ID, user.Email, user.Role, user.WilayahID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{

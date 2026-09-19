@@ -5,17 +5,16 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	
 
-	"gorm.io/gorm"
 	"backend-jalan-rusak/models"
+	"gorm.io/gorm"
 )
 
 type osmResponse struct {
 	Address struct {
 		Village string `json:"village"`
-		Suburb string `json:"suburb"`
-		Town string `json:"town"`
+		Suburb  string `json:"suburb"`
+		Town    string `json:"town"`
 	} `json:"address"`
 	Extratags struct {
 		Highway string `json:"highway"`
@@ -25,12 +24,12 @@ type osmResponse struct {
 func ReverseGeocodeOSM(lat, lng float64) (namaWilayah string, jenisJalan string, err error) {
 	url := fmt.Sprintf("https://nominatim.openstreetmap.org/reverse?lat=%f&lon=%f&format=json&extratags=1", lat, lng)
 
-	req, err  := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return "", "", err
 	}
-
 	req.Header.Set("User-Agent", "Jalan-Rusak/1.0")
+
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -53,17 +52,21 @@ func ReverseGeocodeOSM(lat, lng float64) (namaWilayah string, jenisJalan string,
 		return "", "", fmt.Errorf("wilayah tidak ditemukan")
 	}
 
-	// ini buat otomatis tentukan jenis jalan berdasarkan osm 
-	jenisJalan = "desa" //ini itu buat deafult pemilihan jalannya
-	hw := result.Extratags.Highway
-	if hw == "primary" || hw == "secondary" || hw == "tertiary" {
-		jenisJalan = "jalan"
+	hw := strings.ToLower(result.Extratags.Highway)
+	switch hw {
+	case "trunk":
+		jenisJalan = "nasional"
+	case "primary":
+		jenisJalan = "provinsi"
+	case "secondary", "tertiary":
+		jenisJalan = "kabupaten"
+	default:
+		jenisJalan = "desa"
 	}
 
 	return namaWilayah, jenisJalan, nil
 }
 
-// buat mengirim ke database
 func FindWilayahByNama(db *gorm.DB, nama string) (models.Wilayah, error) {
 	var w models.Wilayah
 	namaBersih := strings.TrimSpace(nama)
