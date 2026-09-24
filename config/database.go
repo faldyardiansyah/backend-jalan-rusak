@@ -61,6 +61,7 @@ func ConnectDatabase(){
 
 	seeders.SeedWilayah(DB)
 	seeders.SeedUser(DB)
+	seeders.SeedLaporan(DB)
 
 	log.Println("Berhasil terhubung ke datasebase MySQL & migrasinya sukses serta data seeder berhasil dijalankan")
 }

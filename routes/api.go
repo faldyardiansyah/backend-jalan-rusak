@@ -36,6 +36,7 @@ func SetupRoutes(r *gin.Engine) {
 		{
 			admin.GET("/dashboard", adminController.GetDashboardStats)
 			admin.GET("/laporan", adminController.GetAllLaporan)
+			admin.GET("/laporan/:id", adminController.GetLaporanByID)
 			admin.PUT("/laporan/:id/status", adminController.UpdateStatusLaporan) 
 			admin.GET("/map/laporan", adminController.GetMapLaporan)
 			admin.GET("/laporan/:id/chat", controllers.GetChatByLaporanID)

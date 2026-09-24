@@ -88,9 +88,9 @@ func GetChatByLaporanID(c *gin.Context) {
 		return
 	}
 
-	// ini buat cek hak aksesnya
-	if roleStr == string(models.RoleWarga) && laporan.UserID != userID {
-		c.JSON(http.StatusUnauthorized, gin.H{
+	// validasi hak akses laporan (warga, admin_pemdes, admin_pu, super_admin)
+	if !utils.CekAksesLaporan(roleStr, userID, laporan) {
+		c.JSON(http.StatusForbidden, gin.H{
 			"status":  "error",
 			"message": "Anda tidak memiliki akses ke laporan ini",
 		})
