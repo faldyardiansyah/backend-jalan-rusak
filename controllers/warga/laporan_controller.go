@@ -1,6 +1,7 @@
 package warga
 
 import (
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -62,19 +63,19 @@ func CreateLaporan(c *gin.Context) {
 	wilayahIDStr := c.PostForm("wilayah_id")
 
 	lat, err := strconv.ParseFloat(latStr, 64)
-	if err != nil {
+	if err != nil || math.IsNaN(lat) || math.IsInf(lat, 0) || lat < -90 || lat > 90 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
-			"message": "Latitude tidak valid",
+			"message": "Latitude tidak valid (harus berada di antara -90 dan 90)",
 		})
 		return
 	}
 
 	lng, err := strconv.ParseFloat(lngStr, 64)
-	if err != nil {
+	if err != nil || math.IsNaN(lng) || math.IsInf(lng, 0) || lng < -180 || lng > 180 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
-			"message": "Longitude tidak valid",
+			"message": "Longitude tidak valid (harus berada di antara -180 dan 180)",
 		})
 		return
 	}
@@ -120,7 +121,7 @@ func CreateLaporan(c *gin.Context) {
 
 	if wilayahID == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Wilayah tidak ditemukan, mohon pilih manual nyak",
+			"error": "Wilayah tidak ditemukan, mohon pilih manual",
 		})
 		return
 	}
@@ -208,7 +209,7 @@ func GetRiwayatLaporan(c *gin.Context) {
 		Order("created_at DESC").
 		Find(&listLaporan)
 
-	var responseData []LaporanResponse
+	responseData := make([]LaporanResponse, 0)
 
 	for _, lap := range listLaporan {
 		responseData = append(responseData, FormatLaporanToResponse(lap))
@@ -229,7 +230,7 @@ func GetAllLaporanPeta(c *gin.Context) {
 		Preload("Wilayah").
 		Find(&listLaporan)
 
-	var responseData []LaporanResponse
+	responseData := make([]LaporanResponse, 0)
 
 	for _, lap := range listLaporan {
 		responseData = append(responseData, FormatLaporanToResponse(lap))

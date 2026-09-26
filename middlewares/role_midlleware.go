@@ -2,6 +2,7 @@ package middlewares
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -14,26 +15,26 @@ func RequireRole(allowedRoles ...string) gin.HandlerFunc {
 
 		if !exists {
 			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "Akses tidak diizinkan",
+				"error": "Akses tidak diizinkan: Autentikasi diperlukan",
 			})
 			c.Abort()
 			return
 		}
 
-		// Pastikan role berupa string
+		// Pastikan role berupa string non-kosong
 		roleStr, ok := role.(string)
 
-		if !ok {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": "Role tidak valid",
+		if !ok || roleStr == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "Akses tidak diizinkan: Role tidak valid atau kosong",
 			})
 			c.Abort()
 			return
 		}
 
-		// Cocokkan role user dengan role yang diizinkan
+		// Cocokkan role user dengan role yang diizinkan (case-insensitive)
 		for _, allowedRole := range allowedRoles {
-			if roleStr == allowedRole {
+			if strings.EqualFold(roleStr, allowedRole) {
 				c.Next()
 				return
 			}

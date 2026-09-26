@@ -8,6 +8,7 @@ import (
 	"backend-jalan-rusak/models"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/joho/godotenv"
 )
 
 type JWTClaim struct {
@@ -18,6 +19,26 @@ type JWTClaim struct {
 	jwt.RegisteredClaims
 }
 
+func getJWTSecret() ([]byte, error) {
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		secret = os.Getenv("JWT_SECRET_KEY")
+	}
+	if secret == "" {
+		_ = godotenv.Load()
+		secret = os.Getenv("JWT_SECRET")
+		if secret == "" {
+			secret = os.Getenv("JWT_SECRET_KEY")
+		}
+	}
+
+	if len(secret) == 0 {
+		return nil, errors.New("JWT_SECRET environment variable is not configured")
+	}
+
+	return []byte(secret), nil
+}
+
 func GenerateToken(
 	userID uint,
 	email string,
@@ -25,10 +46,9 @@ func GenerateToken(
 	wilayahID *uint,
 ) (string, error) {
 
-	secretKey := []byte(os.Getenv("JWT_SECRET_KEY"))
-
-	if len(secretKey) == 0 {
-		secretKey = []byte("rahasia_default_banget")
+	secretKey, err := getJWTSecret()
+	if err != nil {
+		return "", err
 	}
 
 	var expTime time.Duration
@@ -59,16 +79,22 @@ func GenerateToken(
 }
 
 func ValidateToken(tokenString string) (*JWTClaim, error) {
-	secretKey := []byte(os.Getenv("JWT_SECRET_KEY"))
+	secretKey, err := getJWTSecret()
+	if err != nil {
+		return nil, err
+	}
 
-	if len(secretKey) == 0 {
-		secretKey = []byte("rahasia_default_banget")
+	if tokenString == "" {
+		return nil, errors.New("token cannot be empty")
 	}
 
 	token, err := jwt.ParseWithClaims(
 		tokenString,
 		&JWTClaim{},
 		func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, errors.New("unexpected signing method")
+			}
 			return secretKey, nil
 		},
 	)

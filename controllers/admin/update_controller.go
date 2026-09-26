@@ -24,7 +24,7 @@ func UpdateStatusLaporan(c *gin.Context) {
 		role = rEnum
 	}
 
-	// ini itu biar konversinya amn 
+	// ini itu biar konversinya aman
 	var userID uint
 	switch v := userIDVal.(type) {
 	case uint:
@@ -74,31 +74,68 @@ func UpdateStatusLaporan(c *gin.Context) {
 	}
 
 	var req UpdateReq
-	_ = c.ShouldBind(&req)
+	if strings.Contains(c.ContentType(), "application/json") {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Format JSON tidak valid: " + err.Error(),
+			})
+			return
+		}
+	} else {
+		_ = c.ShouldBind(&req)
+	}
 
-	status := req.Status
+	status := strings.TrimSpace(req.Status)
 	if status == "" {
-		status = c.PostForm("status")
+		status = strings.TrimSpace(c.PostForm("status"))
 	}
-	ditugaskanKe := req.DitugaskanKe
+	ditugaskanKe := strings.TrimSpace(req.DitugaskanKe)
 	if ditugaskanKe == "" {
-		ditugaskanKe = c.PostForm("ditugaskan_ke")
+		ditugaskanKe = strings.TrimSpace(c.PostForm("ditugaskan_ke"))
 	}
-	catatanAdmin := req.CatatanAdmin
+	catatanAdmin := strings.TrimSpace(req.CatatanAdmin)
 	if catatanAdmin == "" {
-		catatanAdmin = c.PostForm("catatan_admin")
+		catatanAdmin = strings.TrimSpace(c.PostForm("catatan_admin"))
 	}
 
-
-	// ini buat validasi enum statusnya
+	// Validasi enum status jika dikirim
+	var statusLower string
 	if status != "" {
-		statusLower := strings.ToLower(status)
+		statusLower = strings.ToLower(status)
 		if statusLower != "menunggu" && statusLower != "proses" && statusLower != "selesai" && statusLower != "ditolak" {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error": "Status tidak valid",
 			})
 			return
 		}
+	}
+
+	// Validasi foto bukti jika status baru adalah "selesai"
+	fileHeader, errFile := c.FormFile("foto_bukti")
+	if statusLower == "selesai" {
+		if errFile != nil && laporan.FotoBukti == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Foto bukti perbaikan wajib diunggah untuk menyelesaikan laporan",
+			})
+			return
+		}
+	}
+
+	// Upload foto bukti baru jika ada file yang diunggah
+	var newFotoBukti string
+	if errFile == nil {
+		uploadedURL, errUpload := utils.UploadCloudinary(fileHeader)
+		if errUpload != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "Gagal mengupload foto bukti",
+			})
+			return
+		}
+		newFotoBukti = uploadedURL
+	}
+
+	// Terapkan perubahan ke entitas laporan
+	if statusLower != "" {
 		laporan.Status = statusLower
 	}
 
@@ -110,24 +147,14 @@ func UpdateStatusLaporan(c *gin.Context) {
 		laporan.CatatanAdmin = catatanAdmin
 	}
 
-	// ini buat upload bukti foto 
-	fileHeader, err := c.FormFile("foto_bukti")
-	if err == nil {
+	if newFotoBukti != "" {
 		if laporan.FotoBukti != "" {
 			_ = utils.DeleteCloudinary(laporan.FotoBukti)
 		}
-
-		fotoBukti, err := utils.UploadCloudinary(fileHeader)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": "Gagal mengupload foto bukti",
-			})
-			return
-		}
-		laporan.FotoBukti = fotoBukti
+		laporan.FotoBukti = newFotoBukti
 	}
 
-	// ini buat simpan perubahan ke db
+	// Simpan perubahan ke database
 	if err := config.DB.Save(&laporan).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "Gagal menyimpan laporan",
@@ -135,11 +162,10 @@ func UpdateStatusLaporan(c *gin.Context) {
 		return
 	}
 
-	//  ini itu buat notifikasi otomatis ke warga nya
+	// Notifikasi otomatis ke warga jika status berubah
 	if status != "" {
 		pesanNotif := "Laporan \"" + laporan.Judul + "\" statusnya diperbarui menjadi: " + strings.ToUpper(laporan.Status)
 
-		// ini buat si admin nulis catatan 
 		if catatanAdmin != "" {
 			pesanNotif += ". Catatan admin: " + catatanAdmin
 		}
