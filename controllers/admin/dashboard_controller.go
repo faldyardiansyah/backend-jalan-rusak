@@ -11,11 +11,41 @@ import (
 )
 
 func GetDashboardStats(c *gin.Context) {
-	roleVal, _ := c.Get("role")
-	userIDVal, _ := c.Get("user_id")
+	roleVal, existsRole := c.Get("role")
+	userIDVal, existsUserID := c.Get("user_id")
 
-	role := roleVal.(string)
-	userID := userIDVal.(uint)
+	if !existsRole || !existsUserID {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"message": "User tidak terautentikasi",
+		})
+		return
+	}
+
+	role, ok := roleVal.(string)
+	if !ok || role == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Role tidak valid",
+		})
+		return
+	}
+
+	var userID uint
+	switch v := userIDVal.(type) {
+	case uint:
+		userID = v
+	case float64:
+		userID = uint(v)
+	case int:
+		userID = uint(v)
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "User ID tidak valid",
+		})
+		return
+	}
 
 	var totalLaporan int64
 	var totalMenunggu int64
@@ -27,7 +57,8 @@ func GetDashboardStats(c *gin.Context) {
 		Model(&models.LaporanKerusakan{}).
 		Where("laporan_kerusakan.deleted_at IS NULL")
 
-	if role == string(models.RoleAdminPemdes) {
+	switch role {
+	case string(models.RoleAdminPemdes):
 		var adminUser models.User
 
 		if err := config.DB.First(&adminUser, userID).Error; err != nil {
@@ -51,29 +82,68 @@ func GetDashboardStats(c *gin.Context) {
 			*adminUser.WilayahID,
 			"desa",
 		)
+
+	case string(models.RoleAdminPu):
+		baseQuery = baseQuery.Where("laporan_kerusakan.jenis_jalan = ?", "kabupaten")
+
+	case string(models.RoleSuperAdmin):
+		// Superadmin menghitung seluruh laporan tanpa filter wilayah dan jenis jalan
+
+	default:
+		c.JSON(http.StatusForbidden, gin.H{
+			"status":  "error",
+			"message": "Akses tidak diizinkan",
+		})
+		return
 	}
 
-	baseQuery.Count(&totalLaporan)
+	if err := baseQuery.Count(&totalLaporan).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Gagal menghitung total laporan",
+		})
+		return
+	}
 
-	queryMenunggu := baseQuery.Session(&gorm.Session{})
-	queryMenunggu.
+	if err := baseQuery.Session(&gorm.Session{}).
 		Where("laporan_kerusakan.status = ?", "menunggu").
-		Count(&totalMenunggu)
+		Count(&totalMenunggu).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Gagal menghitung laporan menunggu",
+		})
+		return
+	}
 
-	queryProses := baseQuery.Session(&gorm.Session{})
-	queryProses.
+	if err := baseQuery.Session(&gorm.Session{}).
 		Where("laporan_kerusakan.status = ?", "proses").
-		Count(&totalProses)
+		Count(&totalProses).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Gagal menghitung laporan proses",
+		})
+		return
+	}
 
-	querySelesai := baseQuery.Session(&gorm.Session{})
-	querySelesai.
+	if err := baseQuery.Session(&gorm.Session{}).
 		Where("laporan_kerusakan.status = ?", "selesai").
-		Count(&totalSelesai)
+		Count(&totalSelesai).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Gagal menghitung laporan selesai",
+		})
+		return
+	}
 
-	queryDitolak := baseQuery.Session(&gorm.Session{})
-	queryDitolak.
+	if err := baseQuery.Session(&gorm.Session{}).
 		Where("laporan_kerusakan.status = ?", "ditolak").
-		Count(&totalDitolak)
+		Count(&totalDitolak).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Gagal menghitung laporan ditolak",
+		})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",

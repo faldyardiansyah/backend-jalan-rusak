@@ -21,8 +21,17 @@ func GetAllLaporan(c *gin.Context) {
 	pageStr := c.DefaultQuery("page", "1")
 	limitStr := c.DefaultQuery("limit", "10")
 
-	page, _ := strconv.Atoi(pageStr)
-	limit, _ := strconv.Atoi(limitStr)
+	page, errPage := strconv.Atoi(pageStr)
+	if errPage != nil || page < 1 {
+		page = 1
+	}
+	limit, errLimit := strconv.Atoi(limitStr)
+	if errLimit != nil || limit <= 0 {
+		limit = 10
+	}
+	if limit > 100 {
+		limit = 100
+	}
 	offset := (page - 1) * limit
 
 	listLaporan := make([]models.LaporanKerusakan, 0)
@@ -37,9 +46,23 @@ func GetAllLaporan(c *gin.Context) {
 	switch role {
 	case "admin_pemdes":
 		var adminUser models.User
-		config.DB.First(&adminUser, userID)
+		if err := config.DB.First(&adminUser, userID).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{
+				"status":  "error",
+				"message": "Data admin tidak ditemukan",
+			})
+			return
+		}
 
-		query = query.Where("laporan_kerusakan.wilayah_id = ? AND laporan_kerusakan.jenis_jalan = ?", adminUser.WilayahID, "desa")
+		if adminUser.WilayahID == nil {
+			c.JSON(http.StatusForbidden, gin.H{
+				"status":  "error",
+				"message": "Admin Pemdes belum memiliki wilayah",
+			})
+			return
+		}
+
+		query = query.Where("laporan_kerusakan.wilayah_id = ? AND laporan_kerusakan.jenis_jalan = ?", *adminUser.WilayahID, "desa")
 	case "admin_pu":
 		query = query.Where("laporan_kerusakan.jenis_jalan = ?", "kabupaten")
 	}

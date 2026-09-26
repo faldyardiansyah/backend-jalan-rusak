@@ -2,6 +2,7 @@ package superadmin
 
 import (
 	"net/http"
+	"strings"
 
 	"backend-jalan-rusak/config"
 	"backend-jalan-rusak/models"
@@ -10,12 +11,36 @@ import (
 )
 
 func GetAllWilayah(c *gin.Context) {
-	var wilayahList []models.Wilayah
-	config.DB.Order("nama ASC").Find(&wilayahList)
+	wilayahList := make([]models.Wilayah, 0)
+	if err := config.DB.Where("deleted_at IS NULL").Order("nama ASC").Find(&wilayahList).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Gagal mengambil data wilayah",
+		})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
 		"data":   wilayahList,
+	})
+}
+
+func ShowWilayah(c *gin.Context) {
+	id := c.Param("id")
+
+	var wilayah models.Wilayah
+	if err := config.DB.Where("deleted_at IS NULL").First(&wilayah, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status": "error",
+			"error":  "Wilayah tidak ditemukan",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data":   wilayah,
 	})
 }
 
@@ -31,14 +56,32 @@ func CreateWilayah(c *gin.Context) {
 		return
 	}
 
-	if input.Tipe != "desa"  && input.Tipe != "kabupaten" {
+	nama := strings.TrimSpace(input.Nama)
+	if nama == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Tipe harus salah satu dari: desa dan kabupaten",
+			"error": "Nama wilayah tidak boleh kosong",
 		})
 		return
 	}
 
-	wilayah := models.Wilayah{Nama: input.Nama, Tipe: input.Tipe}
+	tipe := strings.ToLower(strings.TrimSpace(input.Tipe))
+	if tipe != "desa" && tipe != "kabupaten" && tipe != "provinsi" && tipe != "nasional" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Tipe harus salah satu dari: desa, kabupaten, provinsi, nasional",
+		})
+		return
+	}
+
+	// Cek duplicate wilayah (case-insensitive)
+	var existing models.Wilayah
+	if err := config.DB.Where("LOWER(nama) = ? AND LOWER(tipe) = ? AND deleted_at IS NULL", strings.ToLower(nama), tipe).First(&existing).Error; err == nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Wilayah dengan nama dan tipe tersebut sudah ada",
+		})
+		return
+	}
+
+	wilayah := models.Wilayah{Nama: nama, Tipe: tipe}
 
 	if err := config.DB.Create(&wilayah).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menambahkan wilayah"})
@@ -56,7 +99,7 @@ func UpdateWilayah(c *gin.Context) {
 	id := c.Param("id")
 
 	var wilayah models.Wilayah
-	if err := config.DB.First(&wilayah, id).Error; err != nil {
+	if err := config.DB.Where("deleted_at IS NULL").First(&wilayah, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Wilayah tidak ditemukan"})
 		return
 	}
@@ -67,8 +110,33 @@ func UpdateWilayah(c *gin.Context) {
 		return
 	}
 
-	wilayah.Nama = input.Nama
-	wilayah.Tipe = input.Tipe
+	nama := strings.TrimSpace(input.Nama)
+	if nama == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Nama wilayah tidak boleh kosong",
+		})
+		return
+	}
+
+	tipe := strings.ToLower(strings.TrimSpace(input.Tipe))
+	if tipe != "desa" && tipe != "kabupaten" && tipe != "provinsi" && tipe != "nasional" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Tipe harus salah satu dari: desa, kabupaten, provinsi, nasional",
+		})
+		return
+	}
+
+	// Cek duplicate wilayah jika nama atau tipe berubah
+	var existing models.Wilayah
+	if err := config.DB.Where("LOWER(nama) = ? AND LOWER(tipe) = ? AND id != ? AND deleted_at IS NULL", strings.ToLower(nama), tipe, wilayah.ID).First(&existing).Error; err == nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Wilayah dengan nama dan tipe tersebut sudah ada",
+		})
+		return
+	}
+
+	wilayah.Nama = nama
+	wilayah.Tipe = tipe
 
 	if err := config.DB.Save(&wilayah).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memperbarui wilayah"})
@@ -86,16 +154,16 @@ func DeleteWilayah(c *gin.Context) {
 	id := c.Param("id")
 
 	var wilayah models.Wilayah
-	if err := config.DB.First(&wilayah, id).Error; err != nil {
+	if err := config.DB.Where("deleted_at IS NULL").First(&wilayah, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Wilayah tidak ditemukan"})
 		return
 	}
 
 	var jumlahUser int64
-	config.DB.Model(&models.User{}).Where("wilayah_id = ?", id).Count(&jumlahUser)
+	config.DB.Model(&models.User{}).Where("wilayah_id = ? AND deleted_at IS NULL", id).Count(&jumlahUser)
 
 	var jumlahLaporan int64
-	config.DB.Model(&models.LaporanKerusakan{}).Where("wilayah_id = ?", id).Count(&jumlahLaporan)
+	config.DB.Model(&models.LaporanKerusakan{}).Where("wilayah_id = ? AND deleted_at IS NULL", id).Count(&jumlahLaporan)
 
 	if jumlahUser > 0 || jumlahLaporan > 0 {
 		c.JSON(http.StatusBadRequest, gin.H{

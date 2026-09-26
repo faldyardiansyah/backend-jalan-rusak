@@ -3,17 +3,20 @@ package utils
 import (
 	"strings"
 
-	"backend-jalan-rusak/models"
 	"backend-jalan-rusak/config"
+	"backend-jalan-rusak/models"
 )
 
-// ini itu buat cek akses laporan per id user
+// CekAksesLaporan memvalidasi apakah role dan user tertentu berhak mengakses laporan kerusakan
 func CekAksesLaporan(role string, userID uint, laporan models.LaporanKerusakan) bool {
+	if laporan.DeletedAt.Valid {
+		return false
+	}
+
 	jenisJalan := strings.ToLower(laporan.JenisJalan)
 
 	switch role {
 	case string(models.RoleWarga):
-		// ini buat warga ngecek laporan milik sendiri 
 		return laporan.UserID == userID
 
 	case string(models.RoleAdminPemdes):
@@ -22,7 +25,9 @@ func CekAksesLaporan(role string, userID uint, laporan models.LaporanKerusakan) 
 		}
 
 		var admin models.User
-		config.DB.First(&admin, userID)
+		if err := config.DB.First(&admin, userID).Error; err != nil {
+			return false
+		}
 		return admin.WilayahID != nil && laporan.WilayahID > 0 && *admin.WilayahID == laporan.WilayahID
 
 	case string(models.RoleAdminPu):

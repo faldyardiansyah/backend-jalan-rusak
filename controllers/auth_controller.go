@@ -14,8 +14,8 @@ import (
 
 type RegisterInput struct {
 	Nama     string `json:"name" binding:"required"`
-	Email    string `json:"email" binding:"required"`
-	Password string `json:"password" binding:"required"`
+	Email    string `json:"email" binding:"required,email"`
+	Password string `json:"password" binding:"required,min=6"`
 }
 
 type LoginInput struct {
@@ -54,7 +54,7 @@ func Register(c *gin.Context) {
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
+			"error": "Gagal mengenkripsi password",
 		})
 		return
 	}

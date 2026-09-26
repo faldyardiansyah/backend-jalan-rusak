@@ -5,33 +5,62 @@ import (
 
 	"backend-jalan-rusak/config"
 	"backend-jalan-rusak/models"
+	"backend-jalan-rusak/utils"
 
 	"github.com/gin-gonic/gin"
 )
 
+type MapPoint struct {
+	ID            uint    `json:"id"`
+	Judul         string  `json:"judul"`
+	Latitude      float64 `json:"latitude"`
+	Longitude     float64 `json:"longitude"`
+	Status        string  `json:"status"`
+	TipeKerusakan string  `json:"tipe_kerusakan"`
+	JenisJalan    string  `json:"jenis_jalan"`
+	ImageURL      string  `json:"image_url"`
+	FotoBukti     string  `json:"foto_bukti"`
+	CatatanAdmin  string  `json:"catatan_admin"`
+	Name          string  `json:"name"`
+	WilayahID     uint    `json:"wilayah_id"`
+}
+
 func GetMapLaporan(c *gin.Context) {
-	roleVal, _ := c.Get("role")
-	userIDVal, _ := c.Get("user_id")
+	roleVal, existsRole := c.Get("role")
+	userIDVal, existsUserID := c.Get("user_id")
 
-	role := roleVal.(string)
-	userID := userIDVal.(uint)
-
-	type MapPoint struct {
-		ID            uint    `json:"id"`
-		Judul         string  `json:"judul"`
-		Latitude      float64 `json:"latitude"`
-		Longitude     float64 `json:"longitude"`
-		Status        string  `json:"status"`
-		TipeKerusakan string  `json:"tipe_kerusakan"`
-		JenisJalan    string  `json:"jenis_jalan"`
-		ImageURL      string  `json:"image_url"`
-		FotoBukti     string  `json:"foto_bukti"`
-		CatatanAdmin  string  `json:"catatan_admin"`
-		Name          string  `json:"name"`
-		WilayahID     uint    `json:"wilayah_id"`
+	if !existsRole || !existsUserID {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"message": "User tidak terautentikasi",
+		})
+		return
 	}
 
-	var mapPoints []MapPoint
+	role, ok := roleVal.(string)
+	if !ok || role == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Role tidak valid",
+		})
+		return
+	}
+
+	var userID uint
+	switch v := userIDVal.(type) {
+	case uint:
+		userID = v
+	case float64:
+		userID = uint(v)
+	case int:
+		userID = uint(v)
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "User ID tidak valid",
+		})
+		return
+	}
 
 	query := config.DB.
 		Table("laporan_kerusakan").
@@ -52,9 +81,8 @@ func GetMapLaporan(c *gin.Context) {
 		Joins("JOIN user ON user.id = laporan_kerusakan.user_id").
 		Where("laporan_kerusakan.deleted_at IS NULL")
 
-	// Admin Pemdes hanya melihat laporan
-	// sesuai wilayahnya dan jenis jalan desa
-	if role == string(models.RoleAdminPemdes) {
+	switch role {
+	case string(models.RoleAdminPemdes):
 		var adminUser models.User
 
 		if err := config.DB.First(&adminUser, userID).Error; err != nil {
@@ -68,7 +96,7 @@ func GetMapLaporan(c *gin.Context) {
 		if adminUser.WilayahID == nil {
 			c.JSON(http.StatusForbidden, gin.H{
 				"status":  "error",
-				"message": "Akun admin ini belum di-set wilayahnya",
+				"message": "Admin Pemdes belum memiliki wilayah",
 			})
 			return
 		}
@@ -78,16 +106,22 @@ func GetMapLaporan(c *gin.Context) {
 			*adminUser.WilayahID,
 			"desa",
 		)
-	}
 
-	// Admin PU dan Super Admin tidak difilter berdasarkan wilayah
+	case string(models.RoleAdminPu):
+		query = query.Where("laporan_kerusakan.jenis_jalan = ?", "kabupaten")
 
-	// Filter berdasarkan jenis jalan jika dikirim
-	if jenisJalan := c.Query("jenis_jalan"); jenisJalan != "" {
-		query = query.Where(
-			"laporan_kerusakan.jenis_jalan = ?",
-			jenisJalan,
-		)
+	case string(models.RoleSuperAdmin):
+		// Superadmin melihat seluruh laporan aktif
+		if jenisJalan := c.Query("jenis_jalan"); jenisJalan != "" {
+			query = query.Where("laporan_kerusakan.jenis_jalan = ?", jenisJalan)
+		}
+
+	default:
+		c.JSON(http.StatusForbidden, gin.H{
+			"status":  "error",
+			"message": "Akses tidak diizinkan",
+		})
+		return
 	}
 
 	// Filter berdasarkan status jika dikirim
@@ -98,19 +132,28 @@ func GetMapLaporan(c *gin.Context) {
 		)
 	}
 
+	var rawPoints []MapPoint
+
 	// Ambil data laporan
-	if err := query.Scan(&mapPoints).Error; err != nil {
+	if err := query.Scan(&rawPoints).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
 			"message": "Gagal mengambil data laporan untuk peta",
-			"error":   err.Error(),
 		})
 		return
 	}
 
+	validPoints := make([]MapPoint, 0)
+	for _, p := range rawPoints {
+		if !utils.IsValidCoordinate(p.Latitude, p.Longitude) {
+			continue
+		}
+		validPoints = append(validPoints, p)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success",
-		"total":  len(mapPoints),
-		"data":   mapPoints,
+		"total":  len(validPoints),
+		"data":   validPoints,
 	})
 }

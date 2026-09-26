@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"backend-jalan-rusak/config"
@@ -22,6 +23,22 @@ type ChatResponse struct {
 	Admin              *models.User `json:"admin,omitempty"`
 	Balasan            *string      `json:"balasan"`
 	WaktuBalas         string       `json:"waktu_balas"`
+}
+
+type AdminInboxItem struct {
+	LaporanID            uint   `json:"laporan_id"`
+	JudulLaporan         string `json:"judul_laporan"`
+	JenisJalan           string `json:"jenis_jalan"`
+	StatusLaporan        string `json:"status_laporan"`
+	WilayahID            uint   `json:"wilayah_id"`
+	NamaWilayah          string `json:"nama_wilayah"`
+	UserID               uint   `json:"user_id"`
+	NamaWarga            string `json:"nama_warga"`
+	ProfilePhoto         string `json:"profile_photo"`
+	IsiPesanTerakhir     string `json:"isi_pesan_terakhir"`
+	WaktuPesanTerakhir   string `json:"waktu_pesan_terakhir"`
+	MenungguBalasanAdmin bool   `json:"menunggu_balasan_admin"`
+	TotalPesan           int    `json:"total_pesan"`
 }
 
 func FormatChatToResponse(chat models.RiwayatChat) ChatResponse {
@@ -45,42 +62,55 @@ func FormatChatToResponse(chat models.RiwayatChat) ChatResponse {
 	}
 }
 
-func GetChatByLaporanID(c *gin.Context) {
-	laporanID := c.Param("id")
+func getAuthContext(c *gin.Context) (string, uint, bool) {
 	roleVal, existsRole := c.Get("role")
 	userIDVal, existsUserID := c.Get("user_id")
 
-	// kondisi dimana jika user tidak terauntentikasi
 	if !existsRole || !existsUserID {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"status":  "error",
 			"message": "User tidak terautentikasi",
 		})
-		return
+		return "", 0, false
 	}
 
-	roleStr, ok := roleVal.(string)
-	if !ok {
+	role, ok := roleVal.(string)
+	if !ok || role == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
 			"message": "Role tidak valid",
 		})
-		return
+		return "", 0, false
 	}
 
-	// kondisi buat user id tidak valid
-	userID, ok := userIDVal.(uint)
-	if !ok {
+	var userID uint
+	switch v := userIDVal.(type) {
+	case uint:
+		userID = v
+	case float64:
+		userID = uint(v)
+	case int:
+		userID = uint(v)
+	default:
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
 			"message": "User ID tidak valid",
 		})
+		return "", 0, false
+	}
+
+	return role, userID, true
+}
+
+func GetChatByLaporanID(c *gin.Context) {
+	laporanID := c.Param("id")
+	roleStr, userID, ok := getAuthContext(c)
+	if !ok {
 		return
 	}
 
-	// ini fungsi buat ambil data laoran
 	var laporan models.LaporanKerusakan
-	if err := config.DB.First(&laporan, laporanID).Error; err != nil {
+	if err := config.DB.Where("deleted_at IS NULL").First(&laporan, laporanID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"status":  "error",
 			"message": "Laporan tidak ditemukan",
@@ -88,7 +118,6 @@ func GetChatByLaporanID(c *gin.Context) {
 		return
 	}
 
-	// validasi hak akses laporan (warga, admin_pemdes, admin_pu, super_admin)
 	if !utils.CekAksesLaporan(roleStr, userID, laporan) {
 		c.JSON(http.StatusForbidden, gin.H{
 			"status":  "error",
@@ -97,14 +126,19 @@ func GetChatByLaporanID(c *gin.Context) {
 		return
 	}
 
-	// mengambil riwayat chat
 	var listChat []models.RiwayatChat
-	config.DB.Preload("User").Preload("Admin").
-		Where("laporan_kerusakan_id = ?", laporanID).
+	if err := config.DB.Preload("User").Preload("Admin").
+		Where("laporan_kerusakan_id = ? AND deleted_at IS NULL", laporan.ID).
 		Order("created_at ASC").
-		Find(&listChat)
+		Find(&listChat).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Gagal mengambil riwayat chat",
+		})
+		return
+	}
 
-	var responseData []ChatResponse
+	responseData := make([]ChatResponse, 0)
 	for _, chat := range listChat {
 		responseData = append(responseData, FormatChatToResponse(chat))
 	}
@@ -118,8 +152,18 @@ func GetChatByLaporanID(c *gin.Context) {
 
 func SendPesanWarga(c *gin.Context) {
 	laporanID := c.Param("id")
-	userIDVal, _ := c.Get("user_id")
-	userID := userIDVal.(uint)
+	roleStr, userID, ok := getAuthContext(c)
+	if !ok {
+		return
+	}
+
+	if roleStr != string(models.RoleWarga) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"status":  "error",
+			"message": "Hanya warga yang dapat mengirim pesan melalui endpoint ini",
+		})
+		return
+	}
 
 	var input struct {
 		Pesan string `json:"pesan" binding:"required"`
@@ -133,9 +177,25 @@ func SendPesanWarga(c *gin.Context) {
 		return
 	}
 
-	// ambil data laporan
+	trimmedPesan := strings.TrimSpace(input.Pesan)
+	if trimmedPesan == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Pesan tidak boleh hanya berisi spasi kosong",
+		})
+		return
+	}
+
+	if len(trimmedPesan) > 1000 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Pesan terlalu panjang (maksimal 1000 karakter)",
+		})
+		return
+	}
+
 	var laporan models.LaporanKerusakan
-	if err := config.DB.First(&laporan, laporanID).Error; err != nil {
+	if err := config.DB.Where("deleted_at IS NULL").First(&laporan, laporanID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"status":  "error",
 			"message": "Laporan tidak ditemukan",
@@ -143,7 +203,6 @@ func SendPesanWarga(c *gin.Context) {
 		return
 	}
 
-	// cek buat user id nya 
 	if !utils.CekAksesLaporan(string(models.RoleWarga), userID, laporan) {
 		c.JSON(http.StatusForbidden, gin.H{
 			"status":  "error",
@@ -152,15 +211,29 @@ func SendPesanWarga(c *gin.Context) {
 		return
 	}
 
-	// buat chat baru
 	newChat := models.RiwayatChat{
 		LaporanKerusakanID: laporan.ID,
 		UserID:             userID,
-		Pesan:              input.Pesan,
+		Pesan:              trimmedPesan,
 	}
 
-	config.DB.Create(&newChat)
-	config.DB.Preload("User").First(&newChat, newChat.ID)
+	if err := config.DB.Create(&newChat).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Gagal mengirim pesan",
+		})
+		return
+	}
+
+	if err := config.DB.Preload("User").First(&newChat, newChat.ID).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Gagal memuat pesan yang dikirim",
+		})
+		return
+	}
+
+	KirimNotifikasiChatWarga(laporan)
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
@@ -171,11 +244,10 @@ func SendPesanWarga(c *gin.Context) {
 
 func ReplyPesanAdmin(c *gin.Context) {
 	chatID := c.Param("chat_id")
-	roleVal, _ := c.Get("role")
-	adminIDVal, _ := c.Get("user_id")
-
-	roleStr := roleVal.(string)
-	adminID := adminIDVal.(uint)
+	roleStr, adminID, ok := getAuthContext(c)
+	if !ok {
+		return
+	}
 
 	var input struct {
 		Balasan string `json:"balasan" binding:"required"`
@@ -185,18 +257,29 @@ func ReplyPesanAdmin(c *gin.Context) {
 		return
 	}
 
-	// Cari data chat
+	trimmedBalasan := strings.TrimSpace(input.Balasan)
+	if trimmedBalasan == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Balasan tidak boleh hanya berisi spasi kosong"})
+		return
+	}
+
+	if len(trimmedBalasan) > 1000 {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Balasan terlalu panjang (maksimal 1000 karakter)"})
+		return
+	}
+
 	var chat models.RiwayatChat
-	if err := config.DB.First(&chat, chatID).Error; err != nil {
+	if err := config.DB.Where("deleted_at IS NULL").First(&chat, chatID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "Data chat tidak ditemukan"})
 		return
 	}
 
-	// Ambil data laporannya untuk dicek hak aksesnya
 	var laporan models.LaporanKerusakan
-	config.DB.First(&laporan, chat.LaporanKerusakanID)
+	if err := config.DB.Where("deleted_at IS NULL").First(&laporan, chat.LaporanKerusakanID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "Laporan terkait chat ini tidak ditemukan"})
+		return
+	}
 
-	// 3. Validasi: Apakah admin ini berhak membalas laporan tersebut?
 	if !utils.CekAksesLaporan(roleStr, adminID, laporan) {
 		c.JSON(http.StatusForbidden, gin.H{"status": "error", "message": "Anda tidak memiliki wewenang membalas chat di wilayah/jenis jalan ini"})
 		return
@@ -204,15 +287,163 @@ func ReplyPesanAdmin(c *gin.Context) {
 
 	now := time.Now()
 	chat.AdminID = &adminID
-	chat.Balasan = &input.Balasan
+	chat.Balasan = &trimmedBalasan
 	chat.DibalasAt = &now
 
-	config.DB.Save(&chat)
-	config.DB.Preload("User").Preload("Admin").First(&chat, chat.ID)
+	if err := config.DB.Save(&chat).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Gagal menyimpan balasan chat"})
+		return
+	}
+
+	if err := config.DB.Preload("User").Preload("Admin").First(&chat, chat.ID).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Gagal memuat balasan chat"})
+		return
+	}
+
+	KirimNotifikasiBalasanAdmin(laporan)
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
 		"message": "Balasan berhasil dikirim oleh Admin",
 		"data":    FormatChatToResponse(chat),
+	})
+}
+
+func GetAdminInbox(c *gin.Context) {
+	roleStr, userID, ok := getAuthContext(c)
+	if !ok {
+		return
+	}
+
+	query := config.DB.Table("riwayat_chat").
+		Joins("JOIN laporan_kerusakan ON laporan_kerusakan.id = riwayat_chat.laporan_kerusakan_id").
+		Where("riwayat_chat.deleted_at IS NULL").
+		Where("laporan_kerusakan.deleted_at IS NULL")
+
+	switch roleStr {
+	case string(models.RoleAdminPemdes):
+		var adminUser models.User
+		if err := config.DB.First(&adminUser, userID).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{
+				"status":  "error",
+				"message": "Data admin tidak ditemukan",
+			})
+			return
+		}
+		if adminUser.WilayahID == nil {
+			c.JSON(http.StatusForbidden, gin.H{
+				"status":  "error",
+				"message": "Admin Pemdes belum memiliki wilayah",
+			})
+			return
+		}
+		query = query.Where("laporan_kerusakan.wilayah_id = ? AND laporan_kerusakan.jenis_jalan = ?", *adminUser.WilayahID, "desa")
+
+	case string(models.RoleAdminPu):
+		query = query.Where("laporan_kerusakan.jenis_jalan = ?", "kabupaten")
+
+	case string(models.RoleSuperAdmin):
+		// Superadmin melihat seluruh percakapan
+
+	default:
+		c.JSON(http.StatusForbidden, gin.H{
+			"status":  "error",
+			"message": "Akses tidak diizinkan",
+		})
+		return
+	}
+
+	var reportIDs []uint
+	if err := query.Distinct("riwayat_chat.laporan_kerusakan_id").Pluck("riwayat_chat.laporan_kerusakan_id", &reportIDs).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Gagal mengambil daftar percakapan",
+		})
+		return
+	}
+
+	inboxList := make([]AdminInboxItem, 0)
+	if len(reportIDs) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "success",
+			"message": "Daftar percakapan berhasil diambil",
+			"data":    inboxList,
+		})
+		return
+	}
+
+	var reports []models.LaporanKerusakan
+	if err := config.DB.Preload("User").Preload("Wilayah").Where("id IN ?", reportIDs).Find(&reports).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Gagal mengambil detail laporan percakapan",
+		})
+		return
+	}
+
+	var allChats []models.RiwayatChat
+	if err := config.DB.Where("laporan_kerusakan_id IN ? AND deleted_at IS NULL", reportIDs).Order("created_at ASC").Find(&allChats).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Gagal mengambil riwayat pesan",
+		})
+		return
+	}
+
+	chatsByReport := make(map[uint][]models.RiwayatChat)
+	for _, ch := range allChats {
+		chatsByReport[ch.LaporanKerusakanID] = append(chatsByReport[ch.LaporanKerusakanID], ch)
+	}
+
+	for _, rep := range reports {
+		repChats := chatsByReport[rep.ID]
+		if len(repChats) == 0 {
+			continue
+		}
+
+		totalPesan := len(repChats)
+		lastChat := repChats[totalPesan-1]
+
+		isiPesanTerakhir := lastChat.Pesan
+		waktuPesanTerakhir := utils.FormatTanggalIndo(&lastChat.CreatedAt)
+		if lastChat.Balasan != nil && *lastChat.Balasan != "" && lastChat.DibalasAt != nil {
+			isiPesanTerakhir = *lastChat.Balasan
+			waktuPesanTerakhir = utils.FormatTanggalIndo(lastChat.DibalasAt)
+		}
+
+		menungguBalasan := false
+		for _, ch := range repChats {
+			if ch.Balasan == nil || *ch.Balasan == "" {
+				menungguBalasan = true
+				break
+			}
+		}
+
+		namaWilayah := ""
+		if rep.Wilayah.Nama != "" {
+			namaWilayah = rep.Wilayah.Nama
+		}
+
+		inboxList = append(inboxList, AdminInboxItem{
+			LaporanID:            rep.ID,
+			JudulLaporan:         rep.Judul,
+			JenisJalan:           rep.JenisJalan,
+			StatusLaporan:        rep.Status,
+			WilayahID:            rep.WilayahID,
+			NamaWilayah:          namaWilayah,
+			UserID:               rep.UserID,
+			NamaWarga:            rep.User.Name,
+			ProfilePhoto:         rep.User.ProfilePhoto,
+			IsiPesanTerakhir:     isiPesanTerakhir,
+			WaktuPesanTerakhir:   waktuPesanTerakhir,
+			MenungguBalasanAdmin: menungguBalasan,
+			TotalPesan:           totalPesan,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Daftar percakapan berhasil diambil",
+		"data":    inboxList,
 	})
 }

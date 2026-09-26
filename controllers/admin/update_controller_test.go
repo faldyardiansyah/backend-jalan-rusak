@@ -2,6 +2,7 @@ package admin
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -127,5 +128,93 @@ func TestEmptyAdminLaporanResponse_SerializesToArray(t *testing.T) {
 	expectedSub := `"data":[]`
 	if !strings.Contains(jsonStr, expectedSub) {
 		t.Errorf("expected JSON to contain %q, got %s", expectedSub, jsonStr)
+	}
+}
+
+func parsePagination(pageStr, limitStr string) (int, int, int) {
+	page, errPage := strconv.Atoi(pageStr)
+	if errPage != nil || page < 1 {
+		page = 1
+	}
+	limit, errLimit := strconv.Atoi(limitStr)
+	if errLimit != nil || limit <= 0 {
+		limit = 10
+	}
+	offset := (page - 1) * limit
+	return page, limit, offset
+}
+
+func TestPaginationParsing(t *testing.T) {
+	cases := []struct {
+		name           string
+		pageStr        string
+		limitStr       string
+		expectedPage   int
+		expectedLimit  int
+		expectedOffset int
+	}{
+		{
+			name:           "Standard valid pagination",
+			pageStr:        "2",
+			limitStr:       "15",
+			expectedPage:   2,
+			expectedLimit:  15,
+			expectedOffset: 15,
+		},
+		{
+			name:           "Page 0 -> defaults to 1",
+			pageStr:        "0",
+			limitStr:       "10",
+			expectedPage:   1,
+			expectedLimit:  10,
+			expectedOffset: 0,
+		},
+		{
+			name:           "Negative page -> defaults to 1",
+			pageStr:        "-5",
+			limitStr:       "10",
+			expectedPage:   1,
+			expectedLimit:  10,
+			expectedOffset: 0,
+		},
+		{
+			name:           "Limit 0 -> defaults to 10",
+			pageStr:        "1",
+			limitStr:       "0",
+			expectedPage:   1,
+			expectedLimit:  10,
+			expectedOffset: 0,
+		},
+		{
+			name:           "Negative limit -> defaults to 10",
+			pageStr:        "1",
+			limitStr:       "-20",
+			expectedPage:   1,
+			expectedLimit:  10,
+			expectedOffset: 0,
+		},
+		{
+			name:           "Malformed non-numeric strings -> defaults",
+			pageStr:        "abc",
+			limitStr:       "xyz",
+			expectedPage:   1,
+			expectedLimit:  10,
+			expectedOffset: 0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p, l, o := parsePagination(tc.pageStr, tc.limitStr)
+			if p != tc.expectedPage {
+				t.Errorf("[%s] expected page %d, got %d", tc.name, tc.expectedPage, p)
+			}
+			if l != tc.expectedLimit {
+				t.Errorf("[%s] expected limit %d, got %d", tc.name, tc.expectedLimit, l)
+			}
+			if o != tc.expectedOffset {
+				t.Errorf("[%s] expected offset %d, got %d", tc.name, tc.expectedOffset, o)
+			}
+		})
 	}
 }

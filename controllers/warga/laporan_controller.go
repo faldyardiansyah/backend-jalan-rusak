@@ -54,9 +54,46 @@ func CreateLaporan(c *gin.Context) {
 	}
 
 	userID := userIDVal.(uint)
-	judul := c.PostForm("judul")
-	deskripsi := c.PostForm("deskripsi")
-	tipeKerusakan := c.PostForm("tipe_kerusakan")
+	judul := strings.TrimSpace(c.PostForm("judul"))
+	if judul == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Judul laporan tidak boleh kosong",
+		})
+		return
+	}
+	if len(judul) > 150 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Judul laporan maksimal 150 karakter",
+		})
+		return
+	}
+
+	deskripsi := strings.TrimSpace(c.PostForm("deskripsi"))
+	if deskripsi == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Deskripsi laporan tidak boleh kosong",
+		})
+		return
+	}
+
+	tipeKerusakan := strings.TrimSpace(c.PostForm("tipe_kerusakan"))
+	if tipeKerusakan == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Tipe kerusakan tidak boleh kosong",
+		})
+		return
+	}
+	if len(tipeKerusakan) > 150 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Tipe kerusakan maksimal 150 karakter",
+		})
+		return
+	}
 
 	latStr := c.PostForm("latitude")
 	lngStr := c.PostForm("longitude")
@@ -145,7 +182,7 @@ func CreateLaporan(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
 			"message": "Gagal menyimpan laporan",
-			"error":   result.Error.Error(),
+			"error":   "Terjadi kesalahan pada sistem saat menyimpan laporan",
 		})
 		return
 	}
@@ -225,14 +262,24 @@ func GetRiwayatLaporan(c *gin.Context) {
 func GetAllLaporanPeta(c *gin.Context) {
 	var listLaporan []models.LaporanKerusakan
 
-	config.DB.
+	if err := config.DB.
 		Preload("User").
 		Preload("Wilayah").
-		Find(&listLaporan)
+		Where("laporan_kerusakan.deleted_at IS NULL").
+		Find(&listLaporan).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Gagal mengambil data laporan untuk peta",
+		})
+		return
+	}
 
 	responseData := make([]LaporanResponse, 0)
 
 	for _, lap := range listLaporan {
+		if !utils.IsValidCoordinate(lap.Latitude, lap.Longitude) {
+			continue
+		}
 		responseData = append(responseData, FormatLaporanToResponse(lap))
 	}
 

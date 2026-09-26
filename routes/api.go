@@ -37,8 +37,9 @@ func SetupRoutes(r *gin.Engine) {
 			admin.GET("/dashboard", adminController.GetDashboardStats)
 			admin.GET("/laporan", adminController.GetAllLaporan)
 			admin.GET("/laporan/:id", adminController.GetLaporanByID)
-			admin.PUT("/laporan/:id/status", adminController.UpdateStatusLaporan) 
+			admin.PUT("/laporan/:id/status", adminController.UpdateStatusLaporan)
 			admin.GET("/map/laporan", adminController.GetMapLaporan)
+			admin.GET("/chat", controllers.GetAdminInbox)
 			admin.GET("/laporan/:id/chat", controllers.GetChatByLaporanID)
 			admin.PUT("/chat/:chat_id", controllers.ReplyPesanAdmin)
 		}
@@ -53,10 +54,13 @@ func SetupRoutes(r *gin.Engine) {
 			superadmin.DELETE("/users/:id", superAdminController.DeleteUser)
 			superadmin.GET("/wilayah", superAdminController.GetAllWilayah)
 			superadmin.POST("/wilayah", superAdminController.CreateWilayah)
+			superadmin.GET("/wilayah/:id", superAdminController.ShowWilayah)
 			superadmin.PUT("/wilayah/:id", superAdminController.UpdateWilayah)
 			superadmin.DELETE("/wilayah/:id", superAdminController.DeleteWilayah)
 			superadmin.DELETE("/laporan/:id", superAdminController.DeleteLaporanSpam)
 		}
 		api.GET("/notifikasi", controllers.GetNotifikasiUser)
+		api.PUT("/notifikasi/:id/read", controllers.MarkNotifikasiRead)
+		api.PATCH("/notifikasi/:id/read", controllers.MarkNotifikasiRead)
 	}
 }

@@ -98,6 +98,13 @@ func UpdateStatusLaporan(c *gin.Context) {
 		catatanAdmin = strings.TrimSpace(c.PostForm("catatan_admin"))
 	}
 
+	if len(ditugaskanKe) > 150 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Petugas yang ditugaskan maksimal 150 karakter",
+		})
+		return
+	}
+
 	// Validasi enum status jika dikirim
 	var statusLower string
 	if status != "" {
@@ -134,6 +141,9 @@ func UpdateStatusLaporan(c *gin.Context) {
 		newFotoBukti = uploadedURL
 	}
 
+	oldStatus := strings.ToLower(laporan.Status)
+	statusChanged := statusLower != "" && statusLower != oldStatus
+
 	// Terapkan perubahan ke entitas laporan
 	if statusLower != "" {
 		laporan.Status = statusLower
@@ -163,7 +173,7 @@ func UpdateStatusLaporan(c *gin.Context) {
 	}
 
 	// Notifikasi otomatis ke warga jika status berubah
-	if status != "" {
+	if statusChanged {
 		pesanNotif := "Laporan \"" + laporan.Judul + "\" statusnya diperbarui menjadi: " + strings.ToUpper(laporan.Status)
 
 		if catatanAdmin != "" {
