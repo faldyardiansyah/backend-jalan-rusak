@@ -130,3 +130,60 @@ func Login(c *gin.Context) {
 		},
 	})
 }
+
+// buat update foto tapi opsional
+func UpdateProfilePhoto(c *gin.Context) {
+	userIDVal, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "User tidak terautentikasi",
+		})
+		return
+	}
+	userID := userIDVal.(uint)
+
+	fileHeader, err := c.FormFile("foto")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Foto wajib diunggah",
+		})
+		return
+	}
+
+	imageURL, err := utils.UploadCloudinary(fileHeader)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Gagal upload foto",
+		})
+		return
+	}
+
+	var user models.User
+	if err := config.DB.First(&user, userID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "User tidak ditemukan",
+		})
+		return
+	}
+
+	user.ProfilePhoto = imageURL
+	if err := config.DB.Save(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Gagal menyimpan foto",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Foto profil berhasil diperbarui",
+		"data": gin.H{
+			"id":           user.ID,
+			"nama":         user.Name,
+			"email":        user.Email,
+			"role":         user.Role,
+			"wilayah_id":   user.WilayahID,
+			"profil_photo": user.ProfilePhoto,
+		},
+	})
+}

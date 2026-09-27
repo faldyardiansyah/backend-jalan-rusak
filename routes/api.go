@@ -62,5 +62,6 @@ func SetupRoutes(r *gin.Engine) {
 		api.GET("/notifikasi", controllers.GetNotifikasiUser)
 		api.PUT("/notifikasi/:id/read", controllers.MarkNotifikasiRead)
 		api.PATCH("/notifikasi/:id/read", controllers.MarkNotifikasiRead)
+		api.PUT("/profile/photo", controllers.UpdateProfilePhoto)
 	}
 }
