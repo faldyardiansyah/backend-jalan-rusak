@@ -1,7 +1,10 @@
 package controllers
 
 import (
+	"io"
+	"mime/multipart"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -12,17 +15,35 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const (
+	MaxChatAttachmentSizeBytes = 5 * 1024 * 1024 // 5 MB
+)
+
+var allowedMimeTypes = map[string]bool{
+	"image/jpeg": true,
+	"image/png":  true,
+	"image/webp": true,
+}
+
+type LampiranBalasan struct {
+	URL      string `json:"url"`
+	Nama     string `json:"nama"`
+	MimeType string `json:"mime_type"`
+}
+
 type ChatResponse struct {
-	ID                 uint         `json:"id"`
-	LaporanKerusakanID uint         `json:"laporan_kerusakan_id"`
-	UserID             uint         `json:"user_id"`
-	User               models.User  `json:"user"`
-	Pesan              string       `json:"pesan"`
-	WaktuKirim         string       `json:"waktu_kirim"`
-	AdminID            *uint        `json:"admin_id"`
-	Admin              *models.User `json:"admin,omitempty"`
-	Balasan            *string      `json:"balasan"`
-	WaktuBalas         string       `json:"waktu_balas"`
+	ID                 uint             `json:"id"`
+	LaporanKerusakanID uint             `json:"laporan_kerusakan_id"`
+	UserID             uint             `json:"user_id"`
+	User               models.User      `json:"user"`
+	Pesan              string           `json:"pesan"`
+	WaktuKirim         string           `json:"waktu_kirim"`
+	AdminID            *uint            `json:"admin_id"`
+	Admin              *models.User     `json:"admin,omitempty"`
+	Balasan            *string          `json:"balasan"`
+	WaktuBalas         string           `json:"waktu_balas"`
+	LampiranBalasan    *LampiranBalasan `json:"lampiran_balasan,omitempty"`
+	LampiranBalasanURL *string          `json:"lampiran_balasan_url,omitempty"`
 }
 
 type AdminInboxItem struct {
@@ -48,6 +69,23 @@ func FormatChatToResponse(chat models.RiwayatChat) ChatResponse {
 		waktuBalas = utils.FormatTanggalIndo(chat.DibalasAt)
 	}
 
+	var lampiran *LampiranBalasan
+	if chat.LampiranBalasanURL != nil && *chat.LampiranBalasanURL != "" {
+		nama := ""
+		if chat.LampiranBalasanNama != nil {
+			nama = *chat.LampiranBalasanNama
+		}
+		mime := ""
+		if chat.LampiranBalasanMimeType != nil {
+			mime = *chat.LampiranBalasanMimeType
+		}
+		lampiran = &LampiranBalasan{
+			URL:      *chat.LampiranBalasanURL,
+			Nama:     nama,
+			MimeType: mime,
+		}
+	}
+
 	return ChatResponse{
 		ID:                 chat.ID,
 		LaporanKerusakanID: chat.LaporanKerusakanID,
@@ -59,6 +97,8 @@ func FormatChatToResponse(chat models.RiwayatChat) ChatResponse {
 		Admin:              chat.Admin,
 		Balasan:            chat.Balasan,
 		WaktuBalas:         waktuBalas,
+		LampiranBalasan:    lampiran,
+		LampiranBalasanURL: chat.LampiranBalasanURL,
 	}
 }
 
@@ -249,25 +289,6 @@ func ReplyPesanAdmin(c *gin.Context) {
 		return
 	}
 
-	var input struct {
-		Balasan string `json:"balasan" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Balasan tidak boleh kosong"})
-		return
-	}
-
-	trimmedBalasan := strings.TrimSpace(input.Balasan)
-	if trimmedBalasan == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Balasan tidak boleh hanya berisi spasi kosong"})
-		return
-	}
-
-	if len(trimmedBalasan) > 1000 {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Balasan terlalu panjang (maksimal 1000 karakter)"})
-		return
-	}
-
 	var chat models.RiwayatChat
 	if err := config.DB.Where("deleted_at IS NULL").First(&chat, chatID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "Data chat tidak ditemukan"})
@@ -285,12 +306,106 @@ func ReplyPesanAdmin(c *gin.Context) {
 		return
 	}
 
+	contentType := c.ContentType()
+	var balasanText string
+	var fileHeader *multipart.FileHeader
+	var hasFile bool
+
+	if strings.Contains(contentType, "application/json") {
+		var input struct {
+			Balasan string `json:"balasan"`
+		}
+		if err := c.ShouldBindJSON(&input); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Format JSON tidak valid"})
+			return
+		}
+		balasanText = input.Balasan
+	} else {
+		balasanText = c.PostForm("balasan")
+		var errFile error
+		fileHeader, errFile = c.FormFile("lampiran")
+		if errFile == nil && fileHeader != nil {
+			hasFile = true
+		}
+	}
+
+	trimmedBalasan := strings.TrimSpace(balasanText)
+	if !hasFile && trimmedBalasan == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Balasan atau lampiran gambar tidak boleh kosong"})
+		return
+	}
+
+	if len(trimmedBalasan) > 1000 {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Balasan terlalu panjang (maksimal 1000 karakter)"})
+		return
+	}
+
+	var uploadedURL string
+	var mimeType string
+	var fileName string
+
+	if hasFile {
+		if fileHeader.Size > MaxChatAttachmentSizeBytes {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Ukuran file terlalu besar (maksimal 5MB)"})
+			return
+		}
+
+		ext := strings.ToLower(filepath.Ext(fileHeader.Filename))
+		if ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".webp" {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Ekstensi file tidak didukung. Hanya .jpg, .jpeg, .png, .webp yang diizinkan"})
+			return
+		}
+
+		file, err := fileHeader.Open()
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Gagal membaca file lampiran"})
+			return
+		}
+		buffer := make([]byte, 512)
+		n, err := file.Read(buffer)
+		file.Close()
+		if err != nil && err != io.EOF {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Gagal membaca konten file"})
+			return
+		}
+
+		detectedMime := http.DetectContentType(buffer[:n])
+		detectedMime = strings.Split(detectedMime, ";")[0]
+		detectedMime = strings.TrimSpace(detectedMime)
+
+		if !allowedMimeTypes[detectedMime] {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Format file tidak didukung. Hanya gambar (JPEG, PNG, WEBP) yang diizinkan"})
+			return
+		}
+
+		mimeType = detectedMime
+		fileName = filepath.Base(fileHeader.Filename)
+
+		var errUpload error
+		uploadedURL, errUpload = utils.UploadCloudinary(fileHeader)
+		if errUpload != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Gagal mengunggah lampiran gambar ke server"})
+			return
+		}
+	}
+
 	now := time.Now()
 	chat.AdminID = &adminID
-	chat.Balasan = &trimmedBalasan
+	if trimmedBalasan != "" {
+		chat.Balasan = &trimmedBalasan
+	}
 	chat.DibalasAt = &now
 
+	if hasFile && uploadedURL != "" {
+		chat.LampiranBalasanURL = &uploadedURL
+		chat.LampiranBalasanNama = &fileName
+		chat.LampiranBalasanMimeType = &mimeType
+	}
+
 	if err := config.DB.Save(&chat).Error; err != nil {
+		if hasFile && uploadedURL != "" {
+			_ = utils.DeleteCloudinary(uploadedURL)
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Gagal menyimpan balasan chat"})
 		return
 	}
@@ -406,14 +521,24 @@ func GetAdminInbox(c *gin.Context) {
 
 		isiPesanTerakhir := lastChat.Pesan
 		waktuPesanTerakhir := utils.FormatTanggalIndo(&lastChat.CreatedAt)
-		if lastChat.Balasan != nil && *lastChat.Balasan != "" && lastChat.DibalasAt != nil {
-			isiPesanTerakhir = *lastChat.Balasan
-			waktuPesanTerakhir = utils.FormatTanggalIndo(lastChat.DibalasAt)
+		hasBalasanText := lastChat.Balasan != nil && *lastChat.Balasan != ""
+		hasBalasanAttachment := lastChat.LampiranBalasanURL != nil && *lastChat.LampiranBalasanURL != ""
+
+		if hasBalasanText || hasBalasanAttachment {
+			if lastChat.DibalasAt != nil {
+				waktuPesanTerakhir = utils.FormatTanggalIndo(lastChat.DibalasAt)
+			}
+			if hasBalasanText {
+				isiPesanTerakhir = *lastChat.Balasan
+			} else {
+				isiPesanTerakhir = "📎 Lampiran gambar"
+			}
 		}
 
 		menungguBalasan := false
 		for _, ch := range repChats {
-			if ch.Balasan == nil || *ch.Balasan == "" {
+			chatAnswered := (ch.Balasan != nil && *ch.Balasan != "") || (ch.LampiranBalasanURL != nil && *ch.LampiranBalasanURL != "")
+			if !chatAnswered {
 				menungguBalasan = true
 				break
 			}

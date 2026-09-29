@@ -19,6 +19,10 @@ type RiwayatChat struct {
 	Admin     *User      `gorm:"foreignKey:AdminID" json:"admin,omitempty"`
 	Balasan   *string    `json:"balasan" gorm:"type:text"`
 	DibalasAt *time.Time `json:"dibalas_at"`
+
+	LampiranBalasanURL      *string `json:"lampiran_balasan_url" gorm:"type:varchar(255)"`
+	LampiranBalasanNama     *string `json:"lampiran_balasan_nama" gorm:"type:varchar(255)"`
+	LampiranBalasanMimeType *string `json:"lampiran_balasan_mime_type" gorm:"type:varchar(100)"`
 }
 
 func (*RiwayatChat) TableName() string {

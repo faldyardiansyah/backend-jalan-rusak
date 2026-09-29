@@ -17,6 +17,7 @@ func TestWorkflow_ReportOwnershipBoundToAuth(t *testing.T) {
 
 	// Simulate handler assigning UserID strictly from JWT context
 	createReportSimulasi := func(jwtUserID uint, inputBodyUserID uint) models.LaporanKerusakan {
+		_ = inputBodyUserID // explicitly ignored: UserID must always come from jwtUserID
 		// Business rule: UserID must always come from jwtUserID, ignoring any body payload
 		return models.LaporanKerusakan{
 			UserID: jwtUserID,

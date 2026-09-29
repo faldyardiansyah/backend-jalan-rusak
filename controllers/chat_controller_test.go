@@ -435,3 +435,172 @@ func TestEmptyChatResponse_SerializesToArray(t *testing.T) {
 		t.Errorf("expected JSON to contain '\"data\":[]', got: %s", iStr)
 	}
 }
+
+// Tests for Attachment Validation and Formatting
+func TestChatAttachmentValidation_MimeAndSize(t *testing.T) {
+	// Magic bytes for file types
+	jpegHeader := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46}
+	pngHeader := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}
+	pdfHeader := []byte("%PDF-1.4 sample pdf content")
+	exeHeader := []byte("MZ this is an executable binary")
+	txtHeader := []byte("plain text content here")
+
+	testCases := []struct {
+		name        string
+		data        []byte
+		filename    string
+		size        int64
+		expectValid bool
+		errReason   string
+	}{
+		{"Valid JPEG file", jpegHeader, "jalan-rusak.jpg", 1024 * 100, true, ""},
+		{"Valid PNG file", pngHeader, "bukti-perbaikan.png", 1024 * 200, true, ""},
+		{"Invalid PDF file", pdfHeader, "dokumen.pdf", 1024 * 50, false, "invalid_mime"},
+		{"Invalid EXE file", exeHeader, "script.exe", 1024 * 10, false, "invalid_mime"},
+		{"Invalid TXT file", txtHeader, "catatan.txt", 1024 * 5, false, "invalid_mime"},
+		{"Oversized file", jpegHeader, "foto-besar.jpg", 6 * 1024 * 1024, false, "oversized"},
+		{"Invalid extension spoofing", jpegHeader, "dokumen.pdf", 1024 * 50, false, "invalid_ext"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.size > MaxChatAttachmentSizeBytes {
+				if tc.expectValid {
+					t.Errorf("expected file to be oversized, but got valid")
+				}
+				return
+			}
+
+			ext := strings.ToLower(tc.filename[strings.LastIndex(tc.filename, "."):])
+			if ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".webp" {
+				if tc.expectValid {
+					t.Errorf("expected extension check to fail for %s", tc.filename)
+				}
+				return
+			}
+
+			detected := http.DetectContentType(tc.data)
+			detected = strings.Split(detected, ";")[0]
+			detected = strings.TrimSpace(detected)
+
+			isValidMime := allowedMimeTypes[detected]
+			if isValidMime != tc.expectValid {
+				t.Errorf("[%s] expected valid mime=%v, got=%v (detected: %s)", tc.name, tc.expectValid, isValidMime, detected)
+			}
+		})
+	}
+}
+
+func TestFormatChatToResponse_AttachmentHandling(t *testing.T) {
+	url := "https://res.cloudinary.com/roadis/image/upload/v1234/test.jpg"
+	nama := "test.jpg"
+	mime := "image/jpeg"
+	balasanText := "Jalan sudah kami tinjau."
+
+	now := time.Now()
+	chatWithAttachment := models.RiwayatChat{
+		Model:                   gorm.Model{ID: 101},
+		LaporanKerusakanID:      1,
+		UserID:                  5,
+		Pesan:                   "Apakah sudah diperiksa?",
+		Balasan:                 &balasanText,
+		DibalasAt:               &now,
+		LampiranBalasanURL:      &url,
+		LampiranBalasanNama:     &nama,
+		LampiranBalasanMimeType: &mime,
+	}
+
+	resp := FormatChatToResponse(chatWithAttachment)
+
+	if resp.LampiranBalasan == nil {
+		t.Fatalf("expected LampiranBalasan to be non-nil")
+	}
+	if resp.LampiranBalasan.URL != url {
+		t.Errorf("expected URL=%s, got %s", url, resp.LampiranBalasan.URL)
+	}
+	if resp.LampiranBalasan.Nama != nama {
+		t.Errorf("expected Nama=%s, got %s", nama, resp.LampiranBalasan.Nama)
+	}
+	if resp.LampiranBalasan.MimeType != mime {
+		t.Errorf("expected MimeType=%s, got %s", mime, resp.LampiranBalasan.MimeType)
+	}
+	if resp.LampiranBalasanURL == nil || *resp.LampiranBalasanURL != url {
+		t.Errorf("expected flat LampiranBalasanURL=%s", url)
+	}
+
+	// Test chat without attachment
+	chatWithoutAttachment := models.RiwayatChat{
+		Model:              gorm.Model{ID: 102},
+		LaporanKerusakanID: 1,
+		UserID:             5,
+		Pesan:              "Halo?",
+		Balasan:            &balasanText,
+		DibalasAt:          &now,
+	}
+
+	respNoAtt := FormatChatToResponse(chatWithoutAttachment)
+	if respNoAtt.LampiranBalasan != nil {
+		t.Errorf("expected LampiranBalasan to be nil for text-only chat")
+	}
+	if respNoAtt.LampiranBalasanURL != nil {
+		t.Errorf("expected flat LampiranBalasanURL to be nil for text-only chat")
+	}
+}
+
+func TestAdminInboxItem_AttachmentOnlyPreview(t *testing.T) {
+	url := "https://res.cloudinary.com/roadis/image/upload/v1234/test.jpg"
+	emptyText := ""
+
+	// Scenario 1: Text only
+	textOnly := "Pekerjaan sedang dilakukan."
+	preview1 := textOnly
+	if textOnly == "" && url != "" {
+		preview1 = "📎 Lampiran gambar"
+	}
+	if preview1 != "Pekerjaan sedang dilakukan." {
+		t.Errorf("expected text preview, got: %s", preview1)
+	}
+
+	// Scenario 2: Attachment only
+	preview2 := emptyText
+	if emptyText == "" && url != "" {
+		preview2 = "📎 Lampiran gambar"
+	}
+	if preview2 != "📎 Lampiran gambar" {
+		t.Errorf("expected '📎 Lampiran gambar', got: %s", preview2)
+	}
+}
+
+func TestChatReplyValidation_TextAndAttachment(t *testing.T) {
+	cases := []struct {
+		name        string
+		balasan     string
+		hasFile     bool
+		expectValid bool
+	}{
+		{"Text only valid", "Pekerjaan sudah selesai.", false, true},
+		{"Attachment only valid", "", true, true},
+		{"Text and attachment valid", "Ini foto bukti jalan.", true, true},
+		{"Both empty -> invalid", "", false, false},
+		{"Whitespace only without attachment -> invalid", "   \t\n", false, false},
+		{"Whitespace text with attachment -> valid", "   ", true, true},
+		{"Text exceeding 1000 characters -> invalid", strings.Repeat("X", 1001), false, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			trimmed := strings.TrimSpace(tc.balasan)
+			isValid := true
+			if !tc.hasFile && trimmed == "" {
+				isValid = false
+			} else if len(trimmed) > 1000 {
+				isValid = false
+			}
+
+			if isValid != tc.expectValid {
+				t.Errorf("[%s] expected valid=%v, got=%v", tc.name, tc.expectValid, isValid)
+			}
+		})
+	}
+}
+

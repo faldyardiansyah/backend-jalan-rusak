@@ -10,27 +10,16 @@ import (
 )
 
 func SeedUser(db *gorm.DB) {
-	var count int64
-
-	db.Model(&models.User{}).Count(&count)
-
-	if count > 0 {
-		log.Println("Seeder: Data user sudah ada")
+	var wilayahIndramayu models.Wilayah
+	if err := db.Where("nama = ?", "Indramayu").First(&wilayahIndramayu).Error; err != nil {
+		log.Println("Seeder User: Wilayah Indramayu belum tersedia, lewati seed user")
 		return
 	}
 
-	var wilayahIndramayu models.Wilayah
-
-	if err := db.Where("nama = ?", "Indramayu").
-		First(&wilayahIndramayu).Error; err != nil {
-		log.Fatal("Wilayah Indramayu belum tersedia: ", err)
-	}
-
 	var wilayahLobenerLor models.Wilayah
-
-	if err := db.Where("nama = ?", "Lobener Lor").
-		First(&wilayahLobenerLor).Error; err != nil {
-		log.Fatal("Wilayah Lobener Lor belum tersedia: ", err)
+	if err := db.Where("nama = ?", "Lobener Lor").First(&wilayahLobenerLor).Error; err != nil {
+		log.Println("Seeder User: Wilayah Lobener Lor belum tersedia, lewati seed user")
+		return
 	}
 
 	// hash password
@@ -38,55 +27,83 @@ func SeedUser(db *gorm.DB) {
 		[]byte("12345678"),
 		bcrypt.DefaultCost,
 	)
-
 	if err != nil {
 		log.Fatal("Gagal mengenkripsi password seeder: ", err)
 	}
 
-	// superadmin
-	superAdmin := models.User{Name: "Super Admin", Email: "superadmin@gmail.com", Password: string(hashedPassword), Role: models.RoleSuperAdmin}
+	// 1. Super Admin
+	seedUserItem(db, models.User{
+		Name:     "Super Admin",
+		Email:    "superadmin@gmail.com",
+		Password: string(hashedPassword),
+		Role:     models.RoleSuperAdmin,
+	})
 
-	// Admin PU
-	adminPU := models.User{
+	// 2. Admin PU
+	seedUserItem(db, models.User{
 		Name:     "Admin Dinas PU",
 		Email:    "adminpu@gmail.com",
 		Password: string(hashedPassword),
 		Role:     models.RoleAdminPu,
-	}
+	})
 
-	// Admin Pemdes
-	adminPemdes := models.User{
+	// 3. Admin Pemdes Lobener Lor
+	seedUserItem(db, models.User{
 		Name:      "Admin Dinas Pemdes",
 		Email:     "adminpemdes@gmail.com",
 		Password:  string(hashedPassword),
 		Role:      models.RoleAdminPemdes,
 		WilayahID: &wilayahLobenerLor.ID,
+	})
+
+	// 4. Warga 1: Faldy Ardiansyah (Existing User "Warga" dengan email faldy@gmail.com)
+	var existingWarga models.User
+	if err := db.Where("email = ?", "faldy@gmail.com").First(&existingWarga).Error; err == nil {
+		existingWarga.Name = "Faldy Ardiansyah"
+		existingWarga.WilayahID = &wilayahLobenerLor.ID
+		db.Save(&existingWarga)
+	} else {
+		seedUserItem(db, models.User{
+			Name:      "Faldy Ardiansyah",
+			Email:     "faldy@gmail.com",
+			Password:  string(hashedPassword),
+			Role:      models.RoleWarga,
+			WilayahID: &wilayahLobenerLor.ID,
+		})
 	}
 
-	// Warga
-	warga := models.User{
-		Name:      "Warga",
-		Email:     "faldy@gmail.com",
+	// 5. Warga 2: Siti Aminah
+	seedUserItem(db, models.User{
+		Name:      "Siti Aminah",
+		Email:     "siti.aminah@roadis.local",
 		Password:  string(hashedPassword),
 		Role:      models.RoleWarga,
-		WilayahID: &wilayahIndramayu.ID,
-	}
+		WilayahID: &wilayahLobenerLor.ID,
+	})
 
-	// simpan ke database
-	if err := db.Create(&superAdmin).Error; err != nil {
-		log.Fatal("Gagal membuat Super Admin: ", err)
-	}
-	if err := db.Create(&adminPU).Error; err != nil {
-		log.Fatal("Gagal membuat Admin PU: ", err)
-	}
+	// 6. Warga 3: Bambang Prasetyo
+	seedUserItem(db, models.User{
+		Name:      "Bambang Prasetyo",
+		Email:     "bambang.prasetyo@roadis.local",
+		Password:  string(hashedPassword),
+		Role:      models.RoleWarga,
+		WilayahID: &wilayahLobenerLor.ID,
+	})
 
-	if err := db.Create(&adminPemdes).Error; err != nil {
-		log.Fatal("Gagal membuat Admin Pemdes: ", err)
-	}
+	log.Println("Seeder: Berhasil memastikan data dummy user (idempotent)")
+}
 
-	if err := db.Create(&warga).Error; err != nil {
-		log.Fatal("Gagal membuat Warga: ", err)
+func seedUserItem(db *gorm.DB, u models.User) {
+	var count int64
+	db.Model(&models.User{}).Where("email = ?", u.Email).Count(&count)
+	if count == 0 {
+		if err := db.Create(&u).Error; err != nil {
+			log.Printf("Seeder: Gagal membuat user %s: %v\n", u.Email, err)
+		}
+	} else {
+		db.Model(&models.User{}).Where("email = ?", u.Email).Updates(map[string]interface{}{
+			"name":       u.Name,
+			"wilayah_id": u.WilayahID,
+		})
 	}
-
-	log.Println("Seeder: Berhasil memasukkan data dummy user")
 }

@@ -225,11 +225,9 @@ func TestModel_SoftDelete_AllModels(t *testing.T) {
 	for _, m := range modelsToTest {
 		t.Run("SoftDelete_"+m.name, func(t *testing.T) {
 			active := m.getModel()
-			active.ID = 1
 			active.DeletedAt = gorm.DeletedAt{Time: time.Time{}, Valid: false}
 
 			deleted := m.getModel()
-			deleted.ID = 2
 			deleted.DeletedAt = gorm.DeletedAt{Time: time.Now(), Valid: true}
 
 			if active.DeletedAt.Valid {

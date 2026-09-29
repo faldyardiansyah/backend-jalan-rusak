@@ -47,11 +47,21 @@ func SeedLaporan(db *gorm.DB) {
 		}
 	}
 
-	// 4. Ambil user Warga sebagai pelapor
-	var warga models.User
-	if err := db.Where("role = ?", models.RoleWarga).First(&warga).Error; err != nil {
-		log.Println("Seeder Laporan: User warga belum tersedia, lewati seed laporan")
+	// 4. Ambil 3 user Warga sebagai pelapor
+	var wargaFaldy models.User
+	if err := db.Where("email = ?", "faldy@gmail.com").First(&wargaFaldy).Error; err != nil {
+		log.Println("Seeder Laporan: User Faldy Ardiansyah belum tersedia, lewati seed laporan")
 		return
+	}
+
+	var wargaSiti models.User
+	if err := db.Where("email = ?", "siti.aminah@roadis.local").First(&wargaSiti).Error; err != nil {
+		wargaSiti = wargaFaldy
+	}
+
+	var wargaBambang models.User
+	if err := db.Where("email = ?", "bambang.prasetyo@roadis.local").First(&wargaBambang).Error; err != nil {
+		wargaBambang = wargaFaldy
 	}
 
 	// 5. Data development reports (Idempotent: cek judul sebelum create)
@@ -61,7 +71,7 @@ func SeedLaporan(db *gorm.DB) {
 	devReports := []models.LaporanKerusakan{
 		// REPORT A: Wilayah A (Indramayu) - Desa - Menunggu
 		{
-			UserID:        warga.ID,
+			UserID:        wargaFaldy.ID,
 			WilayahID:     wilayahIndramayu.ID,
 			JenisJalan:    "desa",
 			Judul:         "[DEV] Jalan Desa Sukaurip - Lubang Parah",
@@ -74,7 +84,7 @@ func SeedLaporan(db *gorm.DB) {
 		},
 		// REPORT B: Wilayah A (Indramayu) - Desa - Proses
 		{
-			UserID:        warga.ID,
+			UserID:        wargaFaldy.ID,
 			WilayahID:     wilayahIndramayu.ID,
 			JenisJalan:    "desa",
 			Judul:         "[DEV] Jalan Desa Margadana - Retak Buaya",
@@ -87,9 +97,9 @@ func SeedLaporan(db *gorm.DB) {
 			DitugaskanKe:  "Tim Pemeliharaan Desa Margadana",
 			CatatanAdmin:  "Material pengurukan dan perataan telah tiba di lokasi desa.",
 		},
-		// REPORT C: Wilayah B (Lobener Lor) - Desa - Selesai
+		// REPORT C: Wilayah B (Lobener Lor) - Desa - Selesai (Warga: Faldy Ardiansyah)
 		{
-			UserID:        warga.ID,
+			UserID:        wargaFaldy.ID,
 			WilayahID:     wilayahLobenerLor.ID,
 			JenisJalan:    "desa",
 			Judul:         "[DEV] Jalan Desa Lobener Lor - Lubang Jalan",
@@ -103,9 +113,37 @@ func SeedLaporan(db *gorm.DB) {
 			FotoBukti:     evidenceImg,
 			CatatanAdmin:  "Penambalan aspal cold-mix dan pemadatan telah selesai 100%.",
 		},
+		// REPORT C2 (TAMBAHAN 1): Wilayah B (Lobener Lor) - Desa - Proses (Warga: Siti Aminah)
+		{
+			UserID:        wargaSiti.ID,
+			WilayahID:     wilayahLobenerLor.ID,
+			JenisJalan:    "desa",
+			Judul:         "[DEV] Jalan Desa Lobener Lor - Bahu Jalan Amblas",
+			Deskripsi:     "Bahu jalan desa di dekat saluran irigasi Lobener Lor amblas sedalam 25 cm, memerlukan pengurukan batu dan pemadatan ulang.",
+			Latitude:      -6.4180,
+			Longitude:     108.2850,
+			ImageURL:      placeholderImg,
+			TipeKerusakan: "Jalan Amblas",
+			Status:        "proses",
+			DitugaskanKe:  "Tim Pemeliharaan Desa Lobener Lor",
+			CatatanAdmin:  "Material pengurukan dan alat pemadat telah dijadwalkan ke lokasi dusun timur.",
+		},
+		// REPORT C3 (TAMBAHAN 2): Wilayah B (Lobener Lor) - Desa - Menunggu (Warga: Bambang Prasetyo)
+		{
+			UserID:        wargaBambang.ID,
+			WilayahID:     wilayahLobenerLor.ID,
+			JenisJalan:    "desa",
+			Judul:         "[DEV] Jalan Desa Lobener Lor - Genangan dan Lubang",
+			Deskripsi:     "Permukaan jalan desa berlubang dengan diameter 40 cm dan kerap tergenang air saat hujan, membahayakan pengguna sepeda motor.",
+			Latitude:      -6.4120,
+			Longitude:     108.2810,
+			ImageURL:      placeholderImg,
+			TipeKerusakan: "Lubang",
+			Status:        "menunggu",
+		},
 		// REPORT D: Wilayah A (Indramayu) - Kabupaten - Menunggu
 		{
-			UserID:        warga.ID,
+			UserID:        wargaFaldy.ID,
 			WilayahID:     wilayahIndramayu.ID,
 			JenisJalan:    "kabupaten",
 			Judul:         "[DEV] Jalan Kabupaten Terisi-Cikedung - Amblas",
@@ -118,7 +156,7 @@ func SeedLaporan(db *gorm.DB) {
 		},
 		// REPORT E: Wilayah B (Lobener Lor) - Kabupaten - Proses
 		{
-			UserID:        warga.ID,
+			UserID:        wargaFaldy.ID,
 			WilayahID:     wilayahLobenerLor.ID,
 			JenisJalan:    "kabupaten",
 			Judul:         "[DEV] Jalan Kabupaten Jatibarang-Sleman - Retak Melintang",
@@ -133,7 +171,7 @@ func SeedLaporan(db *gorm.DB) {
 		},
 		// REPORT F: Wilayah B (Lobener Lor) - Kabupaten - Selesai
 		{
-			UserID:        warga.ID,
+			UserID:        wargaFaldy.ID,
 			WilayahID:     wilayahLobenerLor.ID,
 			JenisJalan:    "kabupaten",
 			Judul:         "[DEV] Jalan Kabupaten Lobener-Jatibarang - Bergelombang",
@@ -149,7 +187,7 @@ func SeedLaporan(db *gorm.DB) {
 		},
 		// REPORT G: Wilayah A (Indramayu) - Provinsi - Menunggu
 		{
-			UserID:        warga.ID,
+			UserID:        wargaFaldy.ID,
 			WilayahID:     wilayahIndramayu.ID,
 			JenisJalan:    "provinsi",
 			Judul:         "[DEV] Jalan Provinsi Indramayu-Karangampel - Lubang Besar",
@@ -162,7 +200,7 @@ func SeedLaporan(db *gorm.DB) {
 		},
 		// REPORT H: Wilayah B (Lobener Lor) - Nasional - Proses
 		{
-			UserID:        warga.ID,
+			UserID:        wargaFaldy.ID,
 			WilayahID:     wilayahLobenerLor.ID,
 			JenisJalan:    "nasional",
 			Judul:         "[DEV] Jalan Nasional Pantura Lobener - Retak Memanjang",
@@ -179,18 +217,23 @@ func SeedLaporan(db *gorm.DB) {
 
 	seededCount := 0
 	for _, lap := range devReports {
-		var count int64
-		db.Model(&models.LaporanKerusakan{}).Where("judul = ?", lap.Judul).Count(&count)
-		if count == 0 {
-			if err := db.Create(&lap).Error; err == nil {
+		var existing models.LaporanKerusakan
+		err := db.Where("judul = ?", lap.Judul).First(&existing).Error
+		if err != nil {
+			if errCreate := db.Create(&lap).Error; errCreate == nil {
 				seededCount++
+			}
+		} else {
+			// Update UserID jika belum selaras
+			if existing.UserID != lap.UserID {
+				db.Model(&existing).Update("user_id", lap.UserID)
 			}
 		}
 	}
 
 	if seededCount > 0 {
-		log.Printf("Seeder: Berhasil memasukkan %d data laporan development\n", seededCount)
+		log.Printf("Seeder: Berhasil memasukkan %d data laporan development baru\n", seededCount)
 	} else {
-		log.Println("Seeder: Seluruh data laporan development sudah ada (idempotent)")
+		log.Println("Seeder: Seluruh data laporan development sudah ada dan tersinkronisasi (idempotent)")
 	}
 }
