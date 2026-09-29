@@ -65,6 +65,13 @@ func SetupRoutes(r *gin.Engine) {
 		api.PUT("/notifikasi/:id/read", controllers.MarkNotifikasiRead)
 		api.PATCH("/notifikasi/:id/read", controllers.MarkNotifikasiRead)
 		api.DELETE("/notifikasi/:id", controllers.DeleteNotifikasi)
+
+		// Self Profile Endpoints
+		api.GET("/profile", controllers.GetProfile)
+		api.PUT("/profile", controllers.UpdateProfile)
+		api.PUT("/profile/password", controllers.ChangePassword)
+		api.PUT("/profile/avatar", controllers.UploadAvatar)
+		api.DELETE("/profile/avatar", controllers.DeleteAvatar)
 		api.PUT("/profile/photo", controllers.UpdateProfilePhoto)
 	}
 }

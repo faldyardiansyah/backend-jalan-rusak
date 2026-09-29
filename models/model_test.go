@@ -485,3 +485,48 @@ func TestDeleteProtection_RoleWargaImmutable(t *testing.T) {
 		t.Error("RoleAdminPu should be deletable via soft delete")
 	}
 }
+
+// 22. Verify User model additions for Phase 15-BE: Phone, AvatarURL, LastLoginAt, PasswordChangedAt
+func TestModel_UserProfileFields(t *testing.T) {
+	phone := "081234567890"
+	avatar := "https://res.cloudinary.com/demo/image/upload/avatar.jpg"
+	now := time.Now().Truncate(time.Second)
+
+	user := User{
+		Model:             gorm.Model{ID: 10},
+		Name:              "Admin Pemdes",
+		Email:             "pemdes@roadis.id",
+		Password:          "hashed_password_secret",
+		Role:              RoleAdminPemdes,
+		Phone:             &phone,
+		AvatarURL:         &avatar,
+		LastLoginAt:       &now,
+		PasswordChangedAt: &now,
+	}
+
+	b, err := json.Marshal(user)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+
+	jsonStr := string(b)
+	if strings.Contains(jsonStr, "hashed_password_secret") {
+		t.Error("password must not be serialized")
+	}
+	if !strings.Contains(jsonStr, `"phone":"081234567890"`) {
+		t.Errorf("expected phone in json: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"avatar_url":"https://res.cloudinary.com/demo/image/upload/avatar.jpg"`) {
+		t.Errorf("expected avatar_url in json: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"last_login_at"`) {
+		t.Errorf("expected last_login_at in json: %s", jsonStr)
+	}
+	if strings.Contains(jsonStr, "password") {
+		t.Errorf("password and internal password fields must not be serialized to JSON: %s", jsonStr)
+	}
+	if user.PasswordChangedAt == nil {
+		t.Error("expected user.PasswordChangedAt struct field to be populated")
+	}
+}
+

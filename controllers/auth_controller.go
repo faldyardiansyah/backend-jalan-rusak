@@ -3,6 +3,7 @@ package controllers
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"backend-jalan-rusak/config"
 	"backend-jalan-rusak/models"
@@ -59,11 +60,13 @@ func Register(c *gin.Context) {
 		return
 	}
 
+	now := time.Now()
 	user := models.User{
-		Name:     strings.TrimSpace(input.Nama),
-		Email:    email,
-		Password: string(hashedPassword),
-		Role:     models.RoleWarga,
+		Name:              strings.TrimSpace(input.Nama),
+		Email:             email,
+		Password:          string(hashedPassword),
+		Role:              models.RoleWarga,
+		PasswordChangedAt: &now,
 	}
 
 	if err := config.DB.Create(&user).Error; err != nil {
@@ -108,6 +111,10 @@ func Login(c *gin.Context) {
 		})
 		return
 	}
+
+	now := time.Now()
+	config.DB.Model(&models.User{}).Where("id = ?", user.ID).Update("last_login_at", &now)
+	user.LastLoginAt = &now
 
 	token, err := utils.GenerateToken(user.ID, user.Email, user.Role, user.WilayahID)
 	if err != nil {

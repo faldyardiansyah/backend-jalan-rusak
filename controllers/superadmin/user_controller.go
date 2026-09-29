@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"backend-jalan-rusak/config"
 	"backend-jalan-rusak/models"
@@ -191,12 +192,14 @@ func CreateUser(c *gin.Context) {
 		return
 	}
 
+	now := time.Now()
 	newUser := models.User{
-		Name:      name,
-		Email:     email,
-		Password:  string(hashedPassword),
-		Role:      role,
-		WilayahID: input.WilayahID,
+		Name:              name,
+		Email:             email,
+		Password:          string(hashedPassword),
+		Role:              role,
+		WilayahID:         input.WilayahID,
+		PasswordChangedAt: &now,
 	}
 
 	if err := config.DB.Create(&newUser).Error; err != nil {
@@ -306,6 +309,8 @@ func UpdateUser(c *gin.Context) {
 			return
 		}
 		user.Password = string(hashedPassword)
+		now := time.Now()
+		user.PasswordChangedAt = &now
 	}
 
 	roleStr := strings.ToLower(strings.TrimSpace(input.Role))

@@ -13,6 +13,16 @@ import (
 
 // buat upload file ke Cloudinary dan mengembalikan URL
 func UploadCloudinary(fileHeader *multipart.FileHeader) (string, error) {
+	return UploadCloudinaryWithFolder(fileHeader, "laporan_jalan")
+}
+
+// UploadAvatarCloudinary mengunggah file foto avatar ke Cloudinary dalam folder profile_avatars
+func UploadAvatarCloudinary(fileHeader *multipart.FileHeader) (string, error) {
+	return UploadCloudinaryWithFolder(fileHeader, "profile_avatars")
+}
+
+// UploadCloudinaryWithFolder mengunggah file ke Cloudinary pada folder spesifik
+func UploadCloudinaryWithFolder(fileHeader *multipart.FileHeader, folder string) (string, error) {
 	cloudName := os.Getenv("CLOUDINARY_CLOUD_NAME")
 	apiKey := os.Getenv("CLOUDINARY_API_KEY")
 	apiSecret := os.Getenv("CLOUDINARY_API_SECRET")
@@ -47,7 +57,7 @@ func UploadCloudinary(fileHeader *multipart.FileHeader) (string, error) {
 		ctx,
 		file,
 		uploader.UploadParams{
-			Folder: "laporan_jalan",
+			Folder: folder,
 		},
 	)
 	if err != nil {
