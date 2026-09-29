@@ -60,8 +60,11 @@ func SetupRoutes(r *gin.Engine) {
 			superadmin.DELETE("/laporan/:id", superAdminController.DeleteLaporanSpam)
 		}
 		api.GET("/notifikasi", controllers.GetNotifikasiUser)
+		api.PUT("/notifikasi/read-all", controllers.MarkAllNotifikasiRead)
+		api.PATCH("/notifikasi/read-all", controllers.MarkAllNotifikasiRead)
 		api.PUT("/notifikasi/:id/read", controllers.MarkNotifikasiRead)
 		api.PATCH("/notifikasi/:id/read", controllers.MarkNotifikasiRead)
+		api.DELETE("/notifikasi/:id", controllers.DeleteNotifikasi)
 		api.PUT("/profile/photo", controllers.UpdateProfilePhoto)
 	}
 }
