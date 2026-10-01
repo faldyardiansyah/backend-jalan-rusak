@@ -31,6 +31,7 @@ func init() {
 
 func ensureDBForRoutesTest(t *testing.T) bool {
 	if config.DB != nil {
+		_ = config.DB.AutoMigrate(&models.UserPreference{})
 		return true
 	}
 
@@ -51,6 +52,7 @@ func ensureDBForRoutesTest(t *testing.T) bool {
 		&models.RiwayatChat{},
 		&models.Wilayah{},
 		&models.Notifikasi{},
+		&models.UserPreference{},
 	)
 	config.DB = db
 	return true

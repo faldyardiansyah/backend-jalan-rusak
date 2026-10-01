@@ -28,6 +28,9 @@ type User struct {
 	AvatarURL         *string            `json:"avatar_url" gorm:"type:text"`
 	LastLoginAt       *time.Time         `json:"last_login_at"`
 	PasswordChangedAt *time.Time         `json:"-" gorm:"column:password_changed_at"`
+	TokenVersion      uint               `json:"-" gorm:"default:1;not null"`
 	Reports           []LaporanKerusakan `json:"reports,omitempty" gorm:"foreignKey:UserID;references:ID"`
 	ChatHistories     []RiwayatChat      `json:"riwayat_chat,omitempty" gorm:"foreignKey:UserID;references:ID"`
+	Preference        *UserPreference    `json:"preference,omitempty" gorm:"foreignKey:UserID;references:ID"`
 }
+

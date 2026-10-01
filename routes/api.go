@@ -16,6 +16,7 @@ func SetupRoutes(r *gin.Engine) {
 	{
 		public.POST("/register", controllers.Register)
 		public.POST("/login", controllers.Login)
+		public.GET("/health", controllers.HealthCheck)
 	}
 
 	api := r.Group("/api")
@@ -73,5 +74,12 @@ func SetupRoutes(r *gin.Engine) {
 		api.PUT("/profile/avatar", controllers.UploadAvatar)
 		api.DELETE("/profile/avatar", controllers.DeleteAvatar)
 		api.PUT("/profile/photo", controllers.UpdateProfilePhoto)
+
+		// Settings & System Info Endpoints
+		api.GET("/settings", controllers.GetSettings)
+		api.PUT("/settings", controllers.UpdateSettings)
+		api.POST("/settings/logout-all", controllers.LogoutAll)
+		api.POST("/auth/logout-all", controllers.LogoutAll)
+		api.GET("/system/info", controllers.GetSystemInfo)
 	}
 }

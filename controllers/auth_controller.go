@@ -66,6 +66,7 @@ func Register(c *gin.Context) {
 		Email:             email,
 		Password:          string(hashedPassword),
 		Role:              models.RoleWarga,
+		TokenVersion:      1,
 		PasswordChangedAt: &now,
 	}
 
@@ -116,7 +117,12 @@ func Login(c *gin.Context) {
 	config.DB.Model(&models.User{}).Where("id = ?", user.ID).Update("last_login_at", &now)
 	user.LastLoginAt = &now
 
-	token, err := utils.GenerateToken(user.ID, user.Email, user.Role, user.WilayahID)
+	if user.TokenVersion == 0 {
+		user.TokenVersion = 1
+		config.DB.Model(&models.User{}).Where("id = ?", user.ID).Update("token_version", 1)
+	}
+
+	token, err := utils.GenerateToken(user.ID, user.Email, user.Role, user.WilayahID, user.TokenVersion)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "Gagal membuat token",

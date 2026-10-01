@@ -43,6 +43,7 @@ func setupProfileRoutes(r *gin.Engine) {
 // Helper untuk inisialisasi database jika MySQL lokal tersedia
 func ensureTestDB(t *testing.T) bool {
 	if config.DB != nil {
+		_ = config.DB.AutoMigrate(&models.UserPreference{})
 		return true
 	}
 
@@ -63,6 +64,7 @@ func ensureTestDB(t *testing.T) bool {
 		&models.RiwayatChat{},
 		&models.Wilayah{},
 		&models.Notifikasi{},
+		&models.UserPreference{},
 	)
 	if err != nil {
 		t.Logf("AutoMigrate error in test: %v", err)

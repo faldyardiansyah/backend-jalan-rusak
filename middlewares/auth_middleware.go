@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"strings"
 
+	"backend-jalan-rusak/config"
+	"backend-jalan-rusak/models"
 	"backend-jalan-rusak/utils"
 
 	"github.com/gin-gonic/gin"
@@ -49,6 +51,23 @@ func AuthMiddleware() gin.HandlerFunc {
 		c.Set("email", claims.Email)
 		c.Set("role", string(claims.Role))
 		c.Set("wilayah_id", claims.WilayahID)
+
+		// Verifikasi sesi aktif / token version revocation jika terhubung ke database
+		if claims.TokenVersion > 0 && config.DB != nil {
+			var currentVersion uint
+			err := config.DB.Model(&models.User{}).
+				Select("token_version").
+				Where("id = ? AND deleted_at IS NULL", claims.UserID).
+				Scan(&currentVersion).Error
+
+			if err == nil && currentVersion > 0 && claims.TokenVersion != currentVersion {
+				c.JSON(http.StatusUnauthorized, gin.H{
+					"error": "Sesi telah berakhir atau telah dikeluarkan (token revoked)",
+				})
+				c.Abort()
+				return
+			}
+		}
 
 		c.Next()
 	}

@@ -53,6 +53,7 @@ func ConnectDatabase(){
 		&models.RiwayatChat{},
 		&models.Wilayah{},
 		&models.Notifikasi{},
+		&models.UserPreference{},
 	)
 
 	if err != nil {

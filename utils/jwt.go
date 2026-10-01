@@ -12,10 +12,11 @@ import (
 )
 
 type JWTClaim struct {
-	UserID    uint            `json:"user_id"`
-	Email     string          `json:"email"`
-	Role      models.UserRole `json:"role"`
-	WilayahID *uint           `json:"wilayah_id"`
+	UserID       uint            `json:"user_id"`
+	Email        string          `json:"email"`
+	Role         models.UserRole `json:"role"`
+	WilayahID    *uint           `json:"wilayah_id"`
+	TokenVersion uint            `json:"token_version,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -44,6 +45,7 @@ func GenerateToken(
 	email string,
 	role models.UserRole,
 	wilayahID *uint,
+	tokenVersion ...uint,
 ) (string, error) {
 
 	secretKey, err := getJWTSecret()
@@ -59,11 +61,17 @@ func GenerateToken(
 		expTime = 24 * time.Hour
 	}
 
+	var version uint = 1
+	if len(tokenVersion) > 0 && tokenVersion[0] > 0 {
+		version = tokenVersion[0]
+	}
+
 	claims := JWTClaim{
-		UserID:    userID,
-		Email:     email,
-		Role:      role,
-		WilayahID: wilayahID,
+		UserID:       userID,
+		Email:        email,
+		Role:         role,
+		WilayahID:    wilayahID,
+		TokenVersion: version,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(expTime)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
