@@ -80,6 +80,7 @@ func GetProfile(c *gin.Context) {
 			"wilayah":       wilayahData,
 			"avatar_url":    avatarURL,
 			"last_login_at": user.LastLoginAt,
+			"password_changed_at": user.PasswordChangedAt,
 		},
 	})
 }
@@ -188,6 +189,7 @@ func UpdateProfile(c *gin.Context) {
 			"wilayah":       wilayahData,
 			"avatar_url":    avatarURL,
 			"last_login_at": user.LastLoginAt,
+			"password_changed_at": user.PasswordChangedAt,
 		},
 	})
 }
