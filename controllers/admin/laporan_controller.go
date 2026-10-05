@@ -2,6 +2,7 @@ package admin
 
 import (
 	"net/http"
+	"strings"
 	"strconv"
 
 	"backend-jalan-rusak/config"
@@ -18,6 +19,7 @@ func GetAllLaporan(c *gin.Context) {
 
 	statusFilter := c.Query("status")
 	searchKeyword := c.Query("search")
+	jenisJalanFilter := c.Query("jenis_jalan")
 	pageStr := c.DefaultQuery("page", "1")
 	limitStr := c.DefaultQuery("limit", "10")
 
@@ -64,9 +66,16 @@ func GetAllLaporan(c *gin.Context) {
 
 		query = query.Where("laporan_kerusakan.wilayah_id = ? AND laporan_kerusakan.jenis_jalan = ?", *adminUser.WilayahID, "desa")
 	case "admin_pu":
-		query = query.Where("laporan_kerusakan.jenis_jalan = ?", "kabupaten")
+		// PU-5.1: Admin PU dapat melihat laporan dari SEMUA kewenangan jalan
+		if jenisJalanFilter != "" && strings.ToLower(jenisJalanFilter) != "all" {
+			query = query.Where("laporan_kerusakan.jenis_jalan = ?", strings.ToLower(jenisJalanFilter))
+		}
+	default:
+		// Superadmin melihat seluruh laporan aktif dengan filter opsional jenis_jalan
+		if jenisJalanFilter != "" && strings.ToLower(jenisJalanFilter) != "all" {
+			query = query.Where("laporan_kerusakan.jenis_jalan = ?", strings.ToLower(jenisJalanFilter))
+		}
 	}
-	// Jika superadmin, tidak ada filter wilayah
 
 	if statusFilter != "" {
 		query = query.Where("laporan_kerusakan.status = ?", statusFilter)

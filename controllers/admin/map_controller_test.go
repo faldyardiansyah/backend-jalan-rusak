@@ -50,8 +50,8 @@ func filterAdminMapSimulasi(
 		}
 
 	case string(models.RoleAdminPu):
-		if jenisJalan != "kabupaten" {
-			return false, "jenis_jalan_mismatch"
+		if jenisJalanQuery != "" && strings.ToLower(jenisJalanQuery) != "all" && jenisJalan != strings.ToLower(jenisJalanQuery) {
+			return false, "jenis_jalan_query_mismatch"
 		}
 
 	case string(models.RoleSuperAdmin):
@@ -129,6 +129,7 @@ func TestMapScope_AdminPU(t *testing.T) {
 		{WilayahID: wilayahA, JenisJalan: "kabupaten", Status: "menunggu", Latitude: -6.3265, Longitude: 185.0},
 	}
 
+	// 1. Tanpa filter jenis_jalan: Admin PU memonitor seluruh kewenangan (Desa, Kabupaten, Provinsi, Nasional)
 	var visiblePoints []models.LaporanKerusakan
 	for _, lap := range laporanList {
 		ok, _ := filterAdminMapSimulasi(string(models.RoleAdminPu), nil, lap, "", "")
@@ -137,8 +138,21 @@ func TestMapScope_AdminPU(t *testing.T) {
 		}
 	}
 
-	if len(visiblePoints) != 2 {
-		t.Fatalf("expected 2 visible points for Admin PU, got %d", len(visiblePoints))
+	if len(visiblePoints) != 5 {
+		t.Fatalf("expected 5 visible points for Admin PU across all road authorities, got %d", len(visiblePoints))
+	}
+
+	// 2. Dengan filter jenis_jalan="kabupaten": hanya 2 laporan kabupaten
+	var visibleKabupaten []models.LaporanKerusakan
+	for _, lap := range laporanList {
+		ok, _ := filterAdminMapSimulasi(string(models.RoleAdminPu), nil, lap, "", "kabupaten")
+		if ok {
+			visibleKabupaten = append(visibleKabupaten, lap)
+		}
+	}
+
+	if len(visibleKabupaten) != 2 {
+		t.Fatalf("expected 2 visible points for Admin PU with jenis_jalan=kabupaten, got %d", len(visibleKabupaten))
 	}
 }
 

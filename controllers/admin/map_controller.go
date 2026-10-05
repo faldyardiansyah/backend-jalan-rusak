@@ -2,6 +2,7 @@ package admin
 
 import (
 	"net/http"
+	"strings"
 
 	"backend-jalan-rusak/config"
 	"backend-jalan-rusak/models"
@@ -108,12 +109,15 @@ func GetMapLaporan(c *gin.Context) {
 		)
 
 	case string(models.RoleAdminPu):
-		query = query.Where("laporan_kerusakan.jenis_jalan = ?", "kabupaten")
+		// PU-5.1: Admin PU memonitor seluruh kewenangan jalan (Desa, Kabupaten, Provinsi, Nasional)
+		if jenisJalan := c.Query("jenis_jalan"); jenisJalan != "" && strings.ToLower(jenisJalan) != "all" {
+			query = query.Where("laporan_kerusakan.jenis_jalan = ?", strings.ToLower(jenisJalan))
+		}
 
 	case string(models.RoleSuperAdmin):
 		// Superadmin melihat seluruh laporan aktif
-		if jenisJalan := c.Query("jenis_jalan"); jenisJalan != "" {
-			query = query.Where("laporan_kerusakan.jenis_jalan = ?", jenisJalan)
+		if jenisJalan := c.Query("jenis_jalan"); jenisJalan != "" && strings.ToLower(jenisJalan) != "all" {
+			query = query.Where("laporan_kerusakan.jenis_jalan = ?", strings.ToLower(jenisJalan))
 		}
 
 	default:
