@@ -117,6 +117,14 @@ func UpdateStatusLaporan(c *gin.Context) {
 		}
 	}
 
+	// Validasi catatan admin jika status baru adalah "ditolak"
+	if statusLower == "ditolak" && catatanAdmin == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Catatan admin / alasan penolakan wajib diisi saat menolak laporan",
+		})
+		return
+	}
+
 	// Validasi foto bukti jika status baru adalah "selesai"
 	fileHeader, errFile := c.FormFile("foto_bukti")
 	if statusLower == "selesai" {

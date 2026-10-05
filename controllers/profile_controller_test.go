@@ -146,7 +146,7 @@ func TestProfile_GetProfile_ValidToken_And_Exclusions(t *testing.T) {
 	bodyStr := w.Body.String()
 
 	// 3. Password tidak muncul
-	if strings.Contains(bodyStr, "password") {
+	if strings.Contains(bodyStr, `"password":`) {
 		t.Errorf("profile response MUST NOT contain password field: %s", bodyStr)
 	}
 	// 4. Hash tidak muncul

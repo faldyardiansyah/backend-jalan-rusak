@@ -29,6 +29,15 @@ func validateFotoBuktiRequirement(statusLower string, existingFotoBukti string, 
 	return true
 }
 
+func validateCatatanAdminRequirement(statusLower string, catatanAdmin string) (bool, string) {
+	if statusLower == "ditolak" {
+		if strings.TrimSpace(catatanAdmin) == "" {
+			return false, "Catatan admin / alasan penolakan wajib diisi saat menolak laporan"
+		}
+	}
+	return true, "OK"
+}
+
 func TestStatusValidation(t *testing.T) {
 	validCases := []string{"menunggu", "proses", "selesai", "ditolak", "MENUNGGU", "PROSES", "SELESAI", "DITOLAK"}
 	for _, status := range validCases {
@@ -95,6 +104,61 @@ func TestFotoBuktiRequirementOnSelesai(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			allowed := validateFotoBuktiRequirement(tc.status, tc.existingFotoBukti, tc.hasNewFileUpload)
+			if allowed != tc.expectedAllowed {
+				t.Errorf("[%s] expected allowed=%v, got %v", tc.name, tc.expectedAllowed, allowed)
+			}
+		})
+	}
+}
+
+func TestCatatanAdminRequirementOnDitolak(t *testing.T) {
+	testCases := []struct {
+		name            string
+		status          string
+		catatanAdmin    string
+		expectedAllowed bool
+	}{
+		{
+			name:            "Ditolak with empty catatan_admin -> REJECTED (400)",
+			status:          "ditolak",
+			catatanAdmin:    "",
+			expectedAllowed: false,
+		},
+		{
+			name:            "Ditolak with whitespace-only catatan_admin -> REJECTED (400)",
+			status:          "ditolak",
+			catatanAdmin:    "   \t\n  ",
+			expectedAllowed: false,
+		},
+		{
+			name:            "Ditolak with valid catatan_admin -> ALLOWED",
+			status:          "ditolak",
+			catatanAdmin:    "Bukan kewenangan jalan kabupaten",
+			expectedAllowed: true,
+		},
+		{
+			name:            "Menunggu with empty catatan_admin -> ALLOWED",
+			status:          "menunggu",
+			catatanAdmin:    "",
+			expectedAllowed: true,
+		},
+		{
+			name:            "Proses with empty catatan_admin -> ALLOWED",
+			status:          "proses",
+			catatanAdmin:    "",
+			expectedAllowed: true,
+		},
+		{
+			name:            "Selesai with empty catatan_admin -> ALLOWED",
+			status:          "selesai",
+			catatanAdmin:    "",
+			expectedAllowed: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			allowed, _ := validateCatatanAdminRequirement(tc.status, tc.catatanAdmin)
 			if allowed != tc.expectedAllowed {
 				t.Errorf("[%s] expected allowed=%v, got %v", tc.name, tc.expectedAllowed, allowed)
 			}
