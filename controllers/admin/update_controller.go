@@ -194,6 +194,28 @@ func UpdateStatusLaporan(c *gin.Context) {
 			Judul:     "Status Laporan Berubah",
 			Pesan:     pesanNotif,
 		})
+
+		// Notifikasi otomatis ke admin berwenang jika diupdate oleh pihak lain
+		var adminTujuan []models.User
+		switch strings.ToLower(laporan.JenisJalan) {
+		case "desa":
+			config.DB.
+				Where("role = ? AND wilayah_id = ? AND id != ?", models.RoleAdminPemdes, laporan.WilayahID, userID).
+				Find(&adminTujuan)
+		case "kabupaten":
+			config.DB.
+				Where("role = ? AND id != ?", models.RoleAdminPu, userID).
+				Find(&adminTujuan)
+		}
+
+		for _, admin := range adminTujuan {
+			config.DB.Create(&models.Notifikasi{
+				UserID:    admin.ID,
+				LaporanID: laporan.ID,
+				Judul:     "Status Laporan Berubah",
+				Pesan:     pesanNotif,
+			})
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{

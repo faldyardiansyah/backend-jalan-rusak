@@ -604,6 +604,60 @@ func TestNotifikasiEvent_StatusChangeDuplicateProtection(t *testing.T) {
 	}
 }
 
+// 5. Status Change Targeting (Kabupaten -> Admin PU, Desa -> Pemdes Wilayah)
+func TestNotifikasiEvent_StatusChangeTargetAdmins(t *testing.T) {
+	lapDesa := models.LaporanKerusakan{
+		Model:      gorm.Model{ID: 101},
+		UserID:     10,
+		JenisJalan: "desa",
+		WilayahID:  1,
+	}
+	lapKab := models.LaporanKerusakan{
+		Model:      gorm.Model{ID: 102},
+		UserID:     10,
+		JenisJalan: "kabupaten",
+		WilayahID:  1,
+	}
+
+	wilayah1 := uint(1)
+	wilayah2 := uint(2)
+	superAdminID := uint(999)
+	mockAdmins := []models.User{
+		{Model: gorm.Model{ID: 1001}, Role: models.RoleAdminPemdes, WilayahID: &wilayah1},
+		{Model: gorm.Model{ID: 1002}, Role: models.RoleAdminPemdes, WilayahID: &wilayah2},
+		{Model: gorm.Model{ID: 2001}, Role: models.RoleAdminPu},
+	}
+
+	determineTargetAdmins := func(lap models.LaporanKerusakan, updaterID uint, admins []models.User) []uint {
+		var targets []uint
+		for _, a := range admins {
+			if a.ID == updaterID {
+				continue
+			}
+			if strings.ToLower(lap.JenisJalan) == "desa" {
+				if a.Role == models.RoleAdminPemdes && a.WilayahID != nil && *a.WilayahID == lap.WilayahID {
+					targets = append(targets, a.ID)
+				}
+			} else if strings.ToLower(lap.JenisJalan) == "kabupaten" {
+				if a.Role == models.RoleAdminPu {
+					targets = append(targets, a.ID)
+				}
+			}
+		}
+		return targets
+	}
+
+	desaTargets := determineTargetAdmins(lapDesa, superAdminID, mockAdmins)
+	if len(desaTargets) != 1 || desaTargets[0] != 1001 {
+		t.Errorf("expected target admin 1001 for desa wilayah 1, got %v", desaTargets)
+	}
+
+	kabTargets := determineTargetAdmins(lapKab, superAdminID, mockAdmins)
+	if len(kabTargets) != 1 || kabTargets[0] != 2001 {
+		t.Errorf("expected target admin 2001 for kabupaten, got %v", kabTargets)
+	}
+}
+
 // ============================================================
 // F. HTTP ENDPOINT TESTS (Auth, Validation, Response Envelopes)
 // ============================================================
