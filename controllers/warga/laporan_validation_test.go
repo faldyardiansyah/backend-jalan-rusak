@@ -1,11 +1,44 @@
 package warga
 
 import (
+	"bytes"
 	"encoding/json"
 	"math"
+	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"testing"
+
+	"backend-jalan-rusak/config"
+	"backend-jalan-rusak/models"
+	"backend-jalan-rusak/utils"
+
+	"github.com/gin-gonic/gin"
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 )
+
+func ensureTestDB(t *testing.T) bool {
+	if config.DB != nil {
+		return true
+	}
+
+	dsn := "root:@tcp(127.0.0.1:3306)/db_jalan_rusak?charset=utf8mb4&parseTime=True&loc=Local"
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
+		NamingStrategy: schema.NamingStrategy{
+			SingularTable: true,
+		},
+	})
+	if err != nil {
+		t.Logf("MySQL connection unavailable in test (%v)", err)
+		return false
+	}
+
+	config.DB = db
+	return true
+}
 
 func validateCoordinate(latStr, lngStr string) (float64, float64, string) {
 	lat, err := strconv.ParseFloat(latStr, 64)
@@ -148,4 +181,217 @@ func indexOf(s, substr string) int {
 		}
 	}
 	return -1
+}
+
+func createMultipartRequest(fieldName, filename string, content []byte, formFields map[string]string) (*http.Request, error) {
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	for k, v := range formFields {
+		_ = writer.WriteField(k, v)
+	}
+
+	if fieldName != "" {
+		part, err := writer.CreateFormFile(fieldName, filename)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := part.Write(content); err != nil {
+			return nil, err
+		}
+	}
+
+	writer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/warga/laporan", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	return req, nil
+}
+
+func TestCreateLaporan_FileValidation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	validJPG := []byte("\xFF\xD8\xFF\xE0\x00\x10JFIF\x00\x01\x01\x01\x00`\x00`\x00\x00\xFF\xDB\x00C\x00")
+	plainText := []byte("This is plain text and not a photo")
+	pdfBytes := []byte("%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF")
+	corruptBytes := []byte{0x00, 0x01, 0x02, 0x03, 0x04}
+
+	baseFields := map[string]string{
+		"latitude":       "-6.3400",
+		"longitude":      "108.3300",
+		"judul":          "Jalan Rusak Parah",
+		"deskripsi":      "Lubang besar di tengah jalan",
+		"tipe_kerusakan": "berat",
+		"wilayah_id":     "1",
+	}
+
+	t.Run("Missing foto field rejected with 400", func(t *testing.T) {
+		uploaderCalled := false
+		origUploader := LaporanUploader
+		LaporanUploader = func(fh *multipart.FileHeader) (string, error) {
+			uploaderCalled = true
+			return "https://mock.cloudinary/img.jpg", nil
+		}
+		defer func() { LaporanUploader = origUploader }()
+
+		r := gin.New()
+		r.POST("/api/warga/laporan", func(c *gin.Context) {
+			c.Set("user_id", uint(1))
+			CreateLaporan(c)
+		})
+
+		req, _ := createMultipartRequest("", "", nil, baseFields)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", w.Code)
+		}
+		if uploaderCalled {
+			t.Errorf("expected LaporanUploader NOT to be called")
+		}
+	})
+
+	t.Run("Oversized foto (>5MB) rejected with 400 and uploader NOT called", func(t *testing.T) {
+		uploaderCalled := false
+		origUploader := LaporanUploader
+		LaporanUploader = func(fh *multipart.FileHeader) (string, error) {
+			uploaderCalled = true
+			return "https://mock.cloudinary/img.jpg", nil
+		}
+		defer func() { LaporanUploader = origUploader }()
+
+		r := gin.New()
+		r.POST("/api/warga/laporan", func(c *gin.Context) {
+			c.Set("user_id", uint(1))
+			CreateLaporan(c)
+		})
+
+		oversized := make([]byte, utils.MaxUploadImageSizeBytes+1)
+		copy(oversized, validJPG)
+		req, _ := createMultipartRequest("foto", "huge.jpg", oversized, baseFields)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d: %s", w.Code, w.Body.String())
+		}
+		if uploaderCalled {
+			t.Errorf("expected LaporanUploader NOT to be called for oversized file")
+		}
+	})
+
+	t.Run("Disallowed extension (.pdf) rejected with 400 and uploader NOT called", func(t *testing.T) {
+		uploaderCalled := false
+		origUploader := LaporanUploader
+		LaporanUploader = func(fh *multipart.FileHeader) (string, error) {
+			uploaderCalled = true
+			return "https://mock.cloudinary/img.jpg", nil
+		}
+		defer func() { LaporanUploader = origUploader }()
+
+		r := gin.New()
+		r.POST("/api/warga/laporan", func(c *gin.Context) {
+			c.Set("user_id", uint(1))
+			CreateLaporan(c)
+		})
+
+		req, _ := createMultipartRequest("foto", "document.pdf", pdfBytes, baseFields)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d: %s", w.Code, w.Body.String())
+		}
+		if uploaderCalled {
+			t.Errorf("expected LaporanUploader NOT to be called for .pdf")
+		}
+	})
+
+	t.Run("Fake image extension (.jpg with text content) rejected with 400 and uploader NOT called", func(t *testing.T) {
+		uploaderCalled := false
+		origUploader := LaporanUploader
+		LaporanUploader = func(fh *multipart.FileHeader) (string, error) {
+			uploaderCalled = true
+			return "https://mock.cloudinary/img.jpg", nil
+		}
+		defer func() { LaporanUploader = origUploader }()
+
+		r := gin.New()
+		r.POST("/api/warga/laporan", func(c *gin.Context) {
+			c.Set("user_id", uint(1))
+			CreateLaporan(c)
+		})
+
+		req, _ := createMultipartRequest("foto", "fake.jpg", plainText, baseFields)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d: %s", w.Code, w.Body.String())
+		}
+		if uploaderCalled {
+			t.Errorf("expected LaporanUploader NOT to be called for fake .jpg")
+		}
+	})
+
+	t.Run("Corrupt binary image rejected with 400 and uploader NOT called", func(t *testing.T) {
+		uploaderCalled := false
+		origUploader := LaporanUploader
+		LaporanUploader = func(fh *multipart.FileHeader) (string, error) {
+			uploaderCalled = true
+			return "https://mock.cloudinary/img.jpg", nil
+		}
+		defer func() { LaporanUploader = origUploader }()
+
+		r := gin.New()
+		r.POST("/api/warga/laporan", func(c *gin.Context) {
+			c.Set("user_id", uint(1))
+			CreateLaporan(c)
+		})
+
+		req, _ := createMultipartRequest("foto", "corrupt.jpg", corruptBytes, baseFields)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d: %s", w.Code, w.Body.String())
+		}
+		if uploaderCalled {
+			t.Errorf("expected LaporanUploader NOT to be called for corrupt file")
+		}
+	})
+
+	t.Run("Valid JPEG image <= 5MB accepted and uploader called", func(t *testing.T) {
+		hasDB := ensureTestDB(t)
+		if !hasDB {
+			t.Skip("Database not available")
+		}
+		var testUser models.User
+		if err := config.DB.First(&testUser).Error; err != nil {
+			t.Skip("No test user in DB")
+		}
+
+		uploaderCalled := false
+		origUploader := LaporanUploader
+		LaporanUploader = func(fh *multipart.FileHeader) (string, error) {
+			uploaderCalled = true
+			return "https://mock.cloudinary/img.jpg", nil
+		}
+		defer func() { LaporanUploader = origUploader }()
+
+		r := gin.New()
+		r.POST("/api/warga/laporan", func(c *gin.Context) {
+			c.Set("user_id", testUser.ID)
+			CreateLaporan(c)
+		})
+
+		req, _ := createMultipartRequest("foto", "valid.jpg", validJPG, baseFields)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if !uploaderCalled {
+			t.Errorf("expected LaporanUploader TO be called for valid JPG")
+		}
+	})
 }

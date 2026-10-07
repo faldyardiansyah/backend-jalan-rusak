@@ -2,6 +2,7 @@ package admin
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"backend-jalan-rusak/config"
@@ -11,8 +12,23 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+var (
+	// BuktiUploader dan BuktiDeleter menggunakan fungsi Cloudinary existing, dapat di-override pada unit test
+	BuktiUploader = utils.UploadCloudinary
+	BuktiDeleter  = utils.DeleteCloudinary
+)
+
 func UpdateStatusLaporan(c *gin.Context) {
-	id := c.Param("id")
+	idStr := c.Param("id")
+	id, errID := strconv.ParseUint(idStr, 10, 32)
+	if errID != nil || id == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "ID laporan tidak valid",
+			"error":   "ID laporan tidak valid",
+		})
+		return
+	}
 
 	roleVal, _ := c.Get("role")
 	userIDVal, _ := c.Get("user_id")
@@ -37,7 +53,7 @@ func UpdateStatusLaporan(c *gin.Context) {
 
 	// ini buat cari data laporan di databasenya
 	var laporan models.LaporanKerusakan
-	if err := config.DB.First(&laporan, id).Error; err != nil {
+	if err := config.DB.Where("id = ? AND deleted_at IS NULL", id).First(&laporan).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"status":  "error",
 			"message": "Laporan tidak ditemukan",
@@ -48,9 +64,25 @@ func UpdateStatusLaporan(c *gin.Context) {
 	// ini buat validasi hak aksesnya
 	jenisJalanLower := strings.ToLower(laporan.JenisJalan)
 
+	if role != models.RoleAdminPemdes && role != models.RoleAdminPu && role != models.RoleSuperAdmin {
+		c.JSON(http.StatusForbidden, gin.H{
+			"status":  "error",
+			"message": "Akses tidak diizinkan",
+			"error":   "Akses tidak diizinkan",
+		})
+		return
+	}
+
 	if role == models.RoleAdminPemdes {
 		var adminUser models.User
-		config.DB.First(&adminUser, userID)
+		if err := config.DB.First(&adminUser, userID).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{
+				"status":  "error",
+				"message": "Data admin tidak ditemukan",
+				"error":   "Data admin tidak ditemukan",
+			})
+			return
+		}
 
 		if adminUser.WilayahID == nil || laporan.WilayahID != *adminUser.WilayahID || jenisJalanLower != "desa" {
 			c.JSON(http.StatusForbidden, gin.H{
@@ -117,6 +149,29 @@ func UpdateStatusLaporan(c *gin.Context) {
 		}
 	}
 
+	oldStatus := strings.ToLower(laporan.Status)
+	statusChanged := statusLower != "" && statusLower != oldStatus
+
+	// Validasi transisi status (State Machine Guard)
+	if statusChanged {
+		if oldStatus == "selesai" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  "error",
+				"message": "Laporan yang sudah selesai tidak dapat diubah statusnya",
+				"error":   "Laporan yang sudah selesai tidak dapat diubah statusnya",
+			})
+			return
+		}
+		if oldStatus == "ditolak" && statusLower == "selesai" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  "error",
+				"message": "Laporan yang ditolak tidak dapat langsung diselesaikan",
+				"error":   "Laporan yang ditolak tidak dapat langsung diselesaikan",
+			})
+			return
+		}
+	}
+
 	// Validasi catatan admin jika status baru adalah "ditolak"
 	if statusLower == "ditolak" && catatanAdmin == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -139,7 +194,16 @@ func UpdateStatusLaporan(c *gin.Context) {
 	// Upload foto bukti baru jika ada file yang diunggah
 	var newFotoBukti string
 	if errFile == nil {
-		uploadedURL, errUpload := utils.UploadCloudinary(fileHeader)
+		if errVal := utils.ValidateImageFile(fileHeader); errVal != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  "error",
+				"message": errVal.Error(),
+				"error":   errVal.Error(),
+			})
+			return
+		}
+
+		uploadedURL, errUpload := BuktiUploader(fileHeader)
 		if errUpload != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"error": "Gagal mengupload foto bukti",
@@ -149,8 +213,7 @@ func UpdateStatusLaporan(c *gin.Context) {
 		newFotoBukti = uploadedURL
 	}
 
-	oldStatus := strings.ToLower(laporan.Status)
-	statusChanged := statusLower != "" && statusLower != oldStatus
+	oldFotoBukti := laporan.FotoBukti
 
 	// Terapkan perubahan ke entitas laporan
 	if statusLower != "" {
@@ -166,18 +229,23 @@ func UpdateStatusLaporan(c *gin.Context) {
 	}
 
 	if newFotoBukti != "" {
-		if laporan.FotoBukti != "" {
-			_ = utils.DeleteCloudinary(laporan.FotoBukti)
-		}
 		laporan.FotoBukti = newFotoBukti
 	}
 
 	// Simpan perubahan ke database
 	if err := config.DB.Save(&laporan).Error; err != nil {
+		if newFotoBukti != "" {
+			_ = BuktiDeleter(newFotoBukti)
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "Gagal menyimpan laporan",
 		})
 		return
+	}
+
+	// Hapus foto bukti lama hanya jika database save berhasil
+	if newFotoBukti != "" && oldFotoBukti != "" {
+		_ = BuktiDeleter(oldFotoBukti)
 	}
 
 	// Notifikasi otomatis ke warga jika status berubah

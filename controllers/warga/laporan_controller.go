@@ -13,18 +13,24 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+var (
+	// LaporanUploader menggunakan utils.UploadCloudinary existing, dapat di-override pada unit test
+	LaporanUploader = utils.UploadCloudinary
+)
+
 type LaporanResponse struct {
-	ID            uint        `json:"id"`
-	UserID        uint        `json:"user_id"`
-	Judul         string      `json:"judul"`
-	Deskripsi     string      `json:"deskripsi"`
-	Latitude      float64     `json:"latitude"`
-	Longitude     float64     `json:"longitude"`
-	ImageURL      string      `json:"image_url"`
-	TipeKerusakan string      `json:"tipe_kerusakan"`
-	Status        string      `json:"status"`
-	WaktuLaporan  string      `json:"waktu_laporan"`
-	User          models.User `json:"user,omitempty"`
+	ID            uint    `json:"id"`
+	UserID        uint    `json:"user_id"`
+	Judul         string  `json:"judul"`
+	Deskripsi     string  `json:"deskripsi"`
+	Latitude      float64 `json:"latitude"`
+	Longitude     float64 `json:"longitude"`
+	ImageURL      string  `json:"image_url"`
+	TipeKerusakan string  `json:"tipe_kerusakan"`
+	Status        string  `json:"status"`
+	WaktuLaporan  string  `json:"waktu_laporan"`
+	FotoBukti     string  `json:"foto_bukti,omitempty"`
+	CatatanAdmin  string  `json:"catatan_admin,omitempty"`
 }
 
 func FormatLaporanToResponse(lap models.LaporanKerusakan) LaporanResponse {
@@ -39,7 +45,8 @@ func FormatLaporanToResponse(lap models.LaporanKerusakan) LaporanResponse {
 		TipeKerusakan: lap.TipeKerusakan,
 		Status:        lap.Status,
 		WaktuLaporan:  utils.FormatTanggalIndo(&lap.CreatedAt),
-		User:          lap.User,
+		FotoBukti:     lap.FotoBukti,
+		CatatanAdmin:  lap.CatatanAdmin,
 	}
 }
 
@@ -124,30 +131,32 @@ func CreateLaporan(c *gin.Context) {
 		return
 	}
 
-	imageURL, err := utils.UploadCloudinary(fileHeader)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal upload foto"})
+	if errVal := utils.ValidateImageFile(fileHeader); errVal != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": errVal.Error(),
+			"error":   errVal.Error(),
+		})
 		return
+	}
+
+	// Menentukan wilayah id berdasarkan inputan wilayah atau OSM
+	var wilayahID uint
+	if wilayahIDStr != "" {
+		id, err := strconv.ParseUint(wilayahIDStr, 10, 32)
+		if err != nil || id == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  "error",
+				"message": "Wilayah ID tidak valid",
+				"error":   "Wilayah ID tidak valid",
+			})
+			return
+		}
+		wilayahID = uint(id)
 	}
 
 	// Ambil data cadangan dari OSM (Nama Wilayah & Deteksi Jenis Jalan)
 	namaWilayahOSM, jenisJalanOSM, errOSM := utils.ReverseGeocodeOSM(lat, lng)
-
-	// memnetukan jenis jalan
-	jenisJalan := c.PostForm("jenis_jalan")
-	if jenisJalan == "" {
-		jenisJalan = jenisJalanOSM
-	}
-	if jenisJalan == "" {
-		jenisJalan = "desa"
-	}
-
-	// memenentukan wilayah id berdasarkan inputan wilayah
-	var wilayahID uint
-	if wilayahIDStr != "" {
-		id, _ := strconv.Atoi(wilayahIDStr)
-		wilayahID = uint(id)
-	}
 
 	if wilayahID == 0 && errOSM == nil {
 		wilayah, errFind := utils.FindWilayahByNama(config.DB, namaWilayahOSM)
@@ -158,7 +167,43 @@ func CreateLaporan(c *gin.Context) {
 
 	if wilayahID == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Wilayah tidak ditemukan, mohon pilih manual",
+			"status":  "error",
+			"message": "Wilayah tidak ditemukan, mohon pilih manual",
+			"error":   "Wilayah tidak ditemukan, mohon pilih manual",
+		})
+		return
+	}
+
+	// Validasi bahwa WilayahID merujuk ke wilayah aktif (tidak soft-deleted)
+	var targetWilayah models.Wilayah
+	if err := config.DB.Where("id = ? AND deleted_at IS NULL", wilayahID).First(&targetWilayah).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Wilayah tidak valid atau sudah tidak aktif",
+			"error":   "Wilayah tidak valid atau sudah tidak aktif",
+		})
+		return
+	}
+
+	// Menentukan jenis jalan
+	jenisJalan := strings.ToLower(strings.TrimSpace(c.PostForm("jenis_jalan")))
+	if jenisJalan == "" {
+		jenisJalan = strings.ToLower(strings.TrimSpace(jenisJalanOSM))
+	}
+	if jenisJalan == "" {
+		jenisJalan = "desa"
+	}
+	if jenisJalan != "desa" && jenisJalan != "kabupaten" && jenisJalan != "provinsi" && jenisJalan != "nasional" {
+		jenisJalan = "desa"
+	}
+
+	// Upload foto setelah semua validasi input dan wilayah berhasil
+	imageURL, err := LaporanUploader(fileHeader)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Gagal upload foto",
+			"error":   "Gagal upload foto",
 		})
 		return
 	}
@@ -179,6 +224,7 @@ func CreateLaporan(c *gin.Context) {
 	// Simpan laporan ke database
 	result := config.DB.Create(&laporan)
 	if result.Error != nil {
+		_ = utils.DeleteCloudinary(imageURL)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
 			"message": "Gagal menyimpan laporan",
@@ -197,6 +243,55 @@ func CreateLaporan(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
 		"message": "Laporan berhasil dikirim",
+		"data":    FormatLaporanToResponse(laporan),
+	})
+}
+
+func GetLaporanByID(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil || id == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "ID laporan tidak valid",
+			"error":   "ID laporan tidak valid",
+		})
+		return
+	}
+
+	userIDVal, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"message": "User ID tidak ditemukan",
+			"error":   "User ID tidak ditemukan",
+		})
+		return
+	}
+	userID := userIDVal.(uint)
+
+	var laporan models.LaporanKerusakan
+	if err := config.DB.Where("id = ? AND deleted_at IS NULL", id).First(&laporan).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status":  "error",
+			"message": "Laporan tidak ditemukan",
+			"error":   "Laporan tidak ditemukan",
+		})
+		return
+	}
+
+	if laporan.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{
+			"status":  "error",
+			"message": "Anda tidak memiliki akses ke laporan ini",
+			"error":   "Anda tidak memiliki akses ke laporan ini",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Detail laporan berhasil diambil",
 		"data":    FormatLaporanToResponse(laporan),
 	})
 }
@@ -240,9 +335,7 @@ func GetRiwayatLaporan(c *gin.Context) {
 	var listLaporan []models.LaporanKerusakan
 
 	config.DB.
-		Preload("User").
-		Preload("Wilayah").
-		Where("user_id = ?", userID).
+		Where("user_id = ? AND deleted_at IS NULL", userID).
 		Order("created_at DESC").
 		Find(&listLaporan)
 
@@ -263,8 +356,6 @@ func GetAllLaporanPeta(c *gin.Context) {
 	var listLaporan []models.LaporanKerusakan
 
 	if err := config.DB.
-		Preload("User").
-		Preload("Wilayah").
 		Where("laporan_kerusakan.deleted_at IS NULL").
 		Find(&listLaporan).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{

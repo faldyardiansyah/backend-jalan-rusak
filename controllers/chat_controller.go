@@ -5,6 +5,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -143,14 +144,23 @@ func getAuthContext(c *gin.Context) (string, uint, bool) {
 }
 
 func GetChatByLaporanID(c *gin.Context) {
-	laporanID := c.Param("id")
+	laporanIDStr := c.Param("id")
+	laporanID, errID := strconv.ParseUint(laporanIDStr, 10, 32)
+	if errID != nil || laporanID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "ID laporan tidak valid",
+		})
+		return
+	}
+
 	roleStr, userID, ok := getAuthContext(c)
 	if !ok {
 		return
 	}
 
 	var laporan models.LaporanKerusakan
-	if err := config.DB.Where("deleted_at IS NULL").First(&laporan, laporanID).Error; err != nil {
+	if err := config.DB.Where("id = ? AND deleted_at IS NULL", laporanID).First(&laporan).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"status":  "error",
 			"message": "Laporan tidak ditemukan",
@@ -191,7 +201,16 @@ func GetChatByLaporanID(c *gin.Context) {
 }
 
 func SendPesanWarga(c *gin.Context) {
-	laporanID := c.Param("id")
+	laporanIDStr := c.Param("id")
+	laporanID, errID := strconv.ParseUint(laporanIDStr, 10, 32)
+	if errID != nil || laporanID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "ID laporan tidak valid",
+		})
+		return
+	}
+
 	roleStr, userID, ok := getAuthContext(c)
 	if !ok {
 		return
@@ -235,7 +254,7 @@ func SendPesanWarga(c *gin.Context) {
 	}
 
 	var laporan models.LaporanKerusakan
-	if err := config.DB.Where("deleted_at IS NULL").First(&laporan, laporanID).Error; err != nil {
+	if err := config.DB.Where("id = ? AND deleted_at IS NULL", laporanID).First(&laporan).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"status":  "error",
 			"message": "Laporan tidak ditemukan",
@@ -283,20 +302,29 @@ func SendPesanWarga(c *gin.Context) {
 }
 
 func ReplyPesanAdmin(c *gin.Context) {
-	chatID := c.Param("chat_id")
+	chatIDStr := c.Param("chat_id")
+	chatID, errID := strconv.ParseUint(chatIDStr, 10, 32)
+	if errID != nil || chatID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "ID chat tidak valid",
+		})
+		return
+	}
+
 	roleStr, adminID, ok := getAuthContext(c)
 	if !ok {
 		return
 	}
 
 	var chat models.RiwayatChat
-	if err := config.DB.Where("deleted_at IS NULL").First(&chat, chatID).Error; err != nil {
+	if err := config.DB.Where("id = ? AND deleted_at IS NULL", chatID).First(&chat).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "Data chat tidak ditemukan"})
 		return
 	}
 
 	var laporan models.LaporanKerusakan
-	if err := config.DB.Where("deleted_at IS NULL").First(&laporan, chat.LaporanKerusakanID).Error; err != nil {
+	if err := config.DB.Where("id = ? AND deleted_at IS NULL", chat.LaporanKerusakanID).First(&laporan).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "Laporan terkait chat ini tidak ditemukan"})
 		return
 	}

@@ -26,9 +26,11 @@ func SetupRoutes(r *gin.Engine) {
 		warga.Use(middlewares.RequireRole("warga"))
 		{
 			warga.GET("/wilayah", superAdminController.GetAllWilayah)
+			warga.GET("/laporan", wargaController.GetRiwayatLaporan)
 			warga.POST("/laporan", wargaController.CreateLaporan)
 			warga.GET("/laporan/riwayat", wargaController.GetRiwayatLaporan)
 			warga.GET("/laporan/peta", wargaController.GetAllLaporanPeta)
+			warga.GET("/laporan/:id", wargaController.GetLaporanByID)
 			warga.GET("/laporan/:id/chat", controllers.GetChatByLaporanID)
 			warga.POST("/laporan/:id/chat", controllers.SendPesanWarga)
 		}

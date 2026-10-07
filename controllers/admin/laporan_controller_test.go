@@ -53,7 +53,7 @@ func filterLaporanListSimulasi(
 		return false, "forbidden"
 	}
 
-	if statusFilter != "" && strings.ToLower(lap.Status) != strings.ToLower(statusFilter) {
+	if statusFilter != "" && !strings.EqualFold(lap.Status, statusFilter) {
 		return false, "status_mismatch"
 	}
 

@@ -12,10 +12,40 @@ import (
 )
 
 func GetAllLaporan(c *gin.Context) {
-	roleVal, _ := c.Get("role")
-	userIDVal, _ := c.Get("user_id")
-	role := roleVal.(string)
-	userID := userIDVal.(uint)
+	roleVal, existsRole := c.Get("role")
+	userIDVal, existsUserID := c.Get("user_id")
+	if !existsRole || !existsUserID {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"message": "User tidak terautentikasi",
+		})
+		return
+	}
+
+	role, okRole := roleVal.(string)
+	if !okRole || role == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Role tidak valid",
+		})
+		return
+	}
+
+	var userID uint
+	switch v := userIDVal.(type) {
+	case uint:
+		userID = v
+	case float64:
+		userID = uint(v)
+	case int:
+		userID = uint(v)
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "User ID tidak valid",
+		})
+		return
+	}
 
 	statusFilter := c.Query("status")
 	searchKeyword := c.Query("search")
@@ -70,11 +100,17 @@ func GetAllLaporan(c *gin.Context) {
 		if jenisJalanFilter != "" && strings.ToLower(jenisJalanFilter) != "all" {
 			query = query.Where("laporan_kerusakan.jenis_jalan = ?", strings.ToLower(jenisJalanFilter))
 		}
-	default:
+	case "super_admin":
 		// Superadmin melihat seluruh laporan aktif dengan filter opsional jenis_jalan
 		if jenisJalanFilter != "" && strings.ToLower(jenisJalanFilter) != "all" {
 			query = query.Where("laporan_kerusakan.jenis_jalan = ?", strings.ToLower(jenisJalanFilter))
 		}
+	default:
+		c.JSON(http.StatusForbidden, gin.H{
+			"status":  "error",
+			"message": "Akses tidak diizinkan",
+		})
+		return
 	}
 
 	if statusFilter != "" {
@@ -119,10 +155,25 @@ func GetLaporanByID(c *gin.Context) {
 		return
 	}
 
-	roleVal, _ := c.Get("role")
-	userIDVal, _ := c.Get("user_id")
+	roleVal, existsRole := c.Get("role")
+	userIDVal, existsUserID := c.Get("user_id")
+	if !existsRole || !existsUserID {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"message": "User tidak terautentikasi",
+		})
+		return
+	}
 
-	role, _ := roleVal.(string)
+	role, okRole := roleVal.(string)
+	if !okRole || role == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Role tidak valid",
+		})
+		return
+	}
+
 	var userID uint
 	switch v := userIDVal.(type) {
 	case uint:
@@ -131,6 +182,12 @@ func GetLaporanByID(c *gin.Context) {
 		userID = uint(v)
 	case int:
 		userID = uint(v)
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "User ID tidak valid",
+		})
+		return
 	}
 
 	var laporan models.LaporanKerusakan
@@ -139,7 +196,8 @@ func GetLaporanByID(c *gin.Context) {
 		Preload("Wilayah").
 		Where("laporan_kerusakan.id = ? AND laporan_kerusakan.deleted_at IS NULL", id)
 
-	if role == "admin_pemdes" {
+	switch role {
+	case "admin_pemdes":
 		var adminUser models.User
 		if err := config.DB.First(&adminUser, userID).Error; err != nil {
 			c.JSON(http.StatusNotFound, gin.H{
@@ -158,8 +216,15 @@ func GetLaporanByID(c *gin.Context) {
 		}
 
 		query = query.Where("laporan_kerusakan.wilayah_id = ? AND laporan_kerusakan.jenis_jalan = ?", *adminUser.WilayahID, "desa")
+	case "admin_pu", "super_admin":
+		// admin_pu dan super_admin: dapat melihat semua jenis jalan pada view detail laporan
+	default:
+		c.JSON(http.StatusForbidden, gin.H{
+			"status":  "error",
+			"message": "Akses tidak diizinkan",
+		})
+		return
 	}
-	// admin_pu dan super_admin: dapat melihat semua jenis jalan pada view detail laporan
 
 	if err := query.First(&laporan).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{

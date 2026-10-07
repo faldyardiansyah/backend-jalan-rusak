@@ -60,12 +60,17 @@ func ConnectDatabase(){
 		log.Fatalf("Gagal melakukan migrasi ke database: %v", err)
 	}
 
-	seeders.SeedWilayah(DB)
-	seeders.SeedUser(DB)
-	seeders.SeedLaporan(DB)
-	seeders.SeedChat(DB)
+	if os.Getenv("APP_ENV") == "production" || os.Getenv("SEED_DEV_DATA") == "false" {
+		log.Println("Database: Mode production / SEED_DEV_DATA=false, melewati eksekusi seluruh seeder otomatis")
+	} else {
+		seeders.SeedWilayah(DB)
+		seeders.SeedUser(DB)
+		seeders.SeedLaporan(DB)
+		seeders.SeedChat(DB)
+		log.Println("Database: Seluruh data seeder development berhasil dijalankan")
+	}
 
-	log.Println("Berhasil terhubung ke datasebase MySQL & migrasinya sukses serta data seeder berhasil dijalankan")
+	log.Println("Berhasil terhubung ke database MySQL & migrasinya sukses")
 }
 
 func InitCloudinary(){

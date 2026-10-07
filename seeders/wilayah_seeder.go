@@ -2,6 +2,7 @@ package seeders
 
 import (
 	"log"
+	"os"
 
 	"backend-jalan-rusak/models"
 
@@ -9,6 +10,12 @@ import (
 )
 
 func SeedWilayah(db *gorm.DB) {
+	// 1. Guard pemisahan development vs production
+	if os.Getenv("APP_ENV") == "production" || os.Getenv("SEED_DEV_DATA") == "false" {
+		log.Println("Seeder: Mode production / SEED_DEV_DATA=false, melewati seed wilayah default")
+		return
+	}
+
 	var count int64
 
 	db.Model(&models.Wilayah{}).Count(&count)

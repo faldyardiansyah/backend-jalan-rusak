@@ -63,7 +63,7 @@ func filterAdminMapSimulasi(
 		return false, "forbidden"
 	}
 
-	if statusQuery != "" && strings.ToLower(lap.Status) != strings.ToLower(statusQuery) {
+	if statusQuery != "" && !strings.EqualFold(lap.Status, statusQuery) {
 		return false, "status_query_mismatch"
 	}
 

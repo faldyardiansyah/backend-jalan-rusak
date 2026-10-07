@@ -1,6 +1,7 @@
 package middlewares
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -9,6 +10,7 @@ import (
 	"backend-jalan-rusak/utils"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func AuthMiddleware() gin.HandlerFunc {
@@ -47,20 +49,29 @@ func AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		c.Set("user_id", claims.UserID)
-		c.Set("email", claims.Email)
-		c.Set("role", string(claims.Role))
-		c.Set("wilayah_id", claims.WilayahID)
-
-		// Verifikasi sesi aktif / token version revocation jika terhubung ke database
-		if claims.TokenVersion > 0 && config.DB != nil {
-			var currentVersion uint
-			err := config.DB.Model(&models.User{}).
-				Select("token_version").
+		// Verifikasi keberadaan pengguna dan status aktif jika terhubung ke database
+		if config.DB != nil {
+			var user models.User
+			err := config.DB.Select("id, token_version").
 				Where("id = ? AND deleted_at IS NULL", claims.UserID).
-				Scan(&currentVersion).Error
+				Take(&user).Error
 
-			if err == nil && currentVersion > 0 && claims.TokenVersion != currentVersion {
+			if err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					c.JSON(http.StatusUnauthorized, gin.H{
+						"error": "Pengguna tidak ditemukan atau telah dinonaktifkan",
+					})
+				} else {
+					c.JSON(http.StatusUnauthorized, gin.H{
+						"error": "Gagal memverifikasi akun pengguna: kendala basis data",
+					})
+				}
+				c.Abort()
+				return
+			}
+
+			// Verifikasi sesi aktif / token version revocation
+			if claims.TokenVersion > 0 && user.TokenVersion > 0 && claims.TokenVersion != user.TokenVersion {
 				c.JSON(http.StatusUnauthorized, gin.H{
 					"error": "Sesi telah berakhir atau telah dikeluarkan (token revoked)",
 				})
@@ -68,6 +79,11 @@ func AuthMiddleware() gin.HandlerFunc {
 				return
 			}
 		}
+
+		c.Set("user_id", claims.UserID)
+		c.Set("email", claims.Email)
+		c.Set("role", string(claims.Role))
+		c.Set("wilayah_id", claims.WilayahID)
 
 		c.Next()
 	}

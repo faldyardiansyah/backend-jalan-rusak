@@ -1,13 +1,46 @@
 package admin
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"backend-jalan-rusak/config"
 	"backend-jalan-rusak/models"
+	"backend-jalan-rusak/utils"
+
+	"github.com/gin-gonic/gin"
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 )
+
+func ensureTestDB(t *testing.T) bool {
+	if config.DB != nil {
+		return true
+	}
+
+	dsn := "root:@tcp(127.0.0.1:3306)/db_jalan_rusak?charset=utf8mb4&parseTime=True&loc=Local"
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
+		NamingStrategy: schema.NamingStrategy{
+			SingularTable: true,
+		},
+	})
+	if err != nil {
+		t.Logf("MySQL connection unavailable in test (%v)", err)
+		return false
+	}
+
+	config.DB = db
+	return true
+}
 
 func validateStatusEnum(status string) (string, bool) {
 	if status == "" {
@@ -281,4 +314,361 @@ func TestPaginationParsing(t *testing.T) {
 			}
 		})
 	}
+}
+
+func createAdminMultipartRequest(laporanID string, fieldName, filename string, content []byte, formFields map[string]string) (*http.Request, error) {
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	for k, v := range formFields {
+		_ = writer.WriteField(k, v)
+	}
+
+	if fieldName != "" {
+		part, err := writer.CreateFormFile(fieldName, filename)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := part.Write(content); err != nil {
+			return nil, err
+		}
+	}
+
+	writer.Close()
+
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/laporan/"+laporanID+"/status", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	return req, nil
+}
+
+func TestUpdateStatusLaporan_FileUploadSecurityAndScope(t *testing.T) {
+	hasDB := ensureTestDB(t)
+	if !hasDB {
+		t.Skip("Database not available for integration test")
+	}
+
+	gin.SetMode(gin.TestMode)
+
+	// Fixtures
+	now := time.Now().UnixNano()
+	wilayah := models.Wilayah{
+		Nama: "Desa Uji BE22 " + strconv.FormatInt(now, 10),
+		Tipe: "desa",
+	}
+	config.DB.Create(&wilayah)
+	defer config.DB.Unscoped().Delete(&wilayah)
+
+	adminPemdes := models.User{
+		Name:      "Admin Pemdes Test",
+		Email:     fmt.Sprintf("pemdes_%d@roadis.local", now),
+		Role:      models.RoleAdminPemdes,
+		WilayahID: &wilayah.ID,
+	}
+	config.DB.Create(&adminPemdes)
+	defer config.DB.Unscoped().Delete(&adminPemdes)
+
+	adminPU := models.User{
+		Name:  "Admin PU Test",
+		Email: fmt.Sprintf("pu_%d@roadis.local", now),
+		Role:  models.RoleAdminPu,
+	}
+	config.DB.Create(&adminPU)
+	defer config.DB.Unscoped().Delete(&adminPU)
+
+	laporanDesa := models.LaporanKerusakan{
+		UserID:        adminPemdes.ID,
+		WilayahID:     wilayah.ID,
+		Judul:         "Jalan Desa Rusak",
+		Deskripsi:     "Deskripsi",
+		Latitude:      -6.34,
+		Longitude:     108.33,
+		ImageURL:      "https://example.com/foto.jpg",
+		TipeKerusakan: "sedang",
+		JenisJalan:    "desa",
+		Status:        "menunggu",
+		FotoBukti:     "",
+	}
+	config.DB.Create(&laporanDesa)
+	defer config.DB.Unscoped().Delete(&laporanDesa)
+
+	laporanKab := models.LaporanKerusakan{
+		UserID:        adminPU.ID,
+		WilayahID:     wilayah.ID,
+		Judul:         "Jalan Kabupaten Rusak",
+		Deskripsi:     "Deskripsi",
+		Latitude:      -6.34,
+		Longitude:     108.33,
+		ImageURL:      "https://example.com/foto.jpg",
+		TipeKerusakan: "sedang",
+		JenisJalan:    "kabupaten",
+		Status:        "menunggu",
+		FotoBukti:     "",
+	}
+	config.DB.Create(&laporanKab)
+	defer config.DB.Unscoped().Delete(&laporanKab)
+
+	validJPG := []byte("\xFF\xD8\xFF\xE0\x00\x10JFIF\x00\x01\x01\x01\x00`\x00`\x00\x00\xFF\xDB\x00C\x00")
+	plainText := []byte("Not an image")
+	pdfBytes := []byte("%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF")
+	corruptBytes := []byte{0x00, 0x01, 0x02, 0x03}
+
+	laporanDesaID := strconv.Itoa(int(laporanDesa.ID))
+	laporanKabID := strconv.Itoa(int(laporanKab.ID))
+
+	// 1. Missing foto_bukti on status selesai -> 400
+	t.Run("Missing foto_bukti on status selesai rejected with 400", func(t *testing.T) {
+		req, _ := createAdminMultipartRequest(laporanDesaID, "", "", nil, map[string]string{
+			"status": "selesai",
+		})
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = req
+		c.Params = gin.Params{{Key: "id", Value: laporanDesaID}}
+		c.Set("user_id", adminPemdes.ID)
+		c.Set("role", string(models.RoleAdminPemdes))
+
+		UpdateStatusLaporan(c)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	// 2. Oversized foto_bukti (>5MB) on status selesai -> 400, uploader NOT called
+	t.Run("Oversized foto_bukti (>5MB) rejected with 400 and uploader NOT called", func(t *testing.T) {
+		uploaderCalled := false
+		origUploader := BuktiUploader
+		BuktiUploader = func(fh *multipart.FileHeader) (string, error) {
+			uploaderCalled = true
+			return "https://mock.cloudinary/bukti.jpg", nil
+		}
+		defer func() { BuktiUploader = origUploader }()
+
+		oversized := make([]byte, utils.MaxUploadImageSizeBytes+1)
+		copy(oversized, validJPG)
+		req, _ := createAdminMultipartRequest(laporanDesaID, "foto_bukti", "huge.jpg", oversized, map[string]string{
+			"status": "selesai",
+		})
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = req
+		c.Params = gin.Params{{Key: "id", Value: laporanDesaID}}
+		c.Set("user_id", adminPemdes.ID)
+		c.Set("role", string(models.RoleAdminPemdes))
+
+		UpdateStatusLaporan(c)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d: %s", w.Code, w.Body.String())
+		}
+		if uploaderCalled {
+			t.Errorf("expected BuktiUploader NOT to be called for oversized file")
+		}
+	})
+
+	// 3. Disallowed extension (.pdf) on status selesai -> 400, uploader NOT called
+	t.Run("Disallowed extension (.pdf) rejected with 400 and uploader NOT called", func(t *testing.T) {
+		uploaderCalled := false
+		origUploader := BuktiUploader
+		BuktiUploader = func(fh *multipart.FileHeader) (string, error) {
+			uploaderCalled = true
+			return "https://mock.cloudinary/bukti.jpg", nil
+		}
+		defer func() { BuktiUploader = origUploader }()
+
+		req, _ := createAdminMultipartRequest(laporanDesaID, "foto_bukti", "document.pdf", pdfBytes, map[string]string{
+			"status": "selesai",
+		})
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = req
+		c.Params = gin.Params{{Key: "id", Value: laporanDesaID}}
+		c.Set("user_id", adminPemdes.ID)
+		c.Set("role", string(models.RoleAdminPemdes))
+
+		UpdateStatusLaporan(c)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d: %s", w.Code, w.Body.String())
+		}
+		if uploaderCalled {
+			t.Errorf("expected BuktiUploader NOT to be called for .pdf")
+		}
+	})
+
+	// 4. Fake image extension (.jpg with text) on status selesai -> 400, uploader NOT called
+	t.Run("Fake image extension (.jpg with text) rejected with 400 and uploader NOT called", func(t *testing.T) {
+		uploaderCalled := false
+		origUploader := BuktiUploader
+		BuktiUploader = func(fh *multipart.FileHeader) (string, error) {
+			uploaderCalled = true
+			return "https://mock.cloudinary/bukti.jpg", nil
+		}
+		defer func() { BuktiUploader = origUploader }()
+
+		req, _ := createAdminMultipartRequest(laporanDesaID, "foto_bukti", "fake.jpg", plainText, map[string]string{
+			"status": "selesai",
+		})
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = req
+		c.Params = gin.Params{{Key: "id", Value: laporanDesaID}}
+		c.Set("user_id", adminPemdes.ID)
+		c.Set("role", string(models.RoleAdminPemdes))
+
+		UpdateStatusLaporan(c)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d: %s", w.Code, w.Body.String())
+		}
+		if uploaderCalled {
+			t.Errorf("expected BuktiUploader NOT to be called for fake .jpg")
+		}
+	})
+
+	// 5. Corrupt file on status selesai -> 400, uploader NOT called
+	t.Run("Corrupt binary rejected with 400 and uploader NOT called", func(t *testing.T) {
+		uploaderCalled := false
+		origUploader := BuktiUploader
+		BuktiUploader = func(fh *multipart.FileHeader) (string, error) {
+			uploaderCalled = true
+			return "https://mock.cloudinary/bukti.jpg", nil
+		}
+		defer func() { BuktiUploader = origUploader }()
+
+		req, _ := createAdminMultipartRequest(laporanDesaID, "foto_bukti", "corrupt.jpg", corruptBytes, map[string]string{
+			"status": "selesai",
+		})
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = req
+		c.Params = gin.Params{{Key: "id", Value: laporanDesaID}}
+		c.Set("user_id", adminPemdes.ID)
+		c.Set("role", string(models.RoleAdminPemdes))
+
+		UpdateStatusLaporan(c)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d: %s", w.Code, w.Body.String())
+		}
+		if uploaderCalled {
+			t.Errorf("expected BuktiUploader NOT to be called for corrupt file")
+		}
+	})
+
+	// 6. Valid JPG <= 5MB on status selesai -> 200, uploader called
+	t.Run("Valid JPEG <= 5MB on status selesai accepted and uploader called", func(t *testing.T) {
+		uploaderCalled := false
+		origUploader := BuktiUploader
+		BuktiUploader = func(fh *multipart.FileHeader) (string, error) {
+			uploaderCalled = true
+			return "https://mock.cloudinary/bukti.jpg", nil
+		}
+		defer func() { BuktiUploader = origUploader }()
+
+		req, _ := createAdminMultipartRequest(laporanDesaID, "foto_bukti", "valid.jpg", validJPG, map[string]string{
+			"status": "selesai",
+		})
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = req
+		c.Params = gin.Params{{Key: "id", Value: laporanDesaID}}
+		c.Set("user_id", adminPemdes.ID)
+		c.Set("role", string(models.RoleAdminPemdes))
+
+		UpdateStatusLaporan(c)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		if !uploaderCalled {
+			t.Errorf("expected BuktiUploader TO be called for valid JPG")
+		}
+
+		// Verify DB status updated
+		var refreshed models.LaporanKerusakan
+		config.DB.First(&refreshed, laporanDesa.ID)
+		if refreshed.Status != "selesai" {
+			t.Errorf("expected status selesai, got %s", refreshed.Status)
+		}
+		if refreshed.FotoBukti != "https://mock.cloudinary/bukti.jpg" {
+			t.Errorf("expected FotoBukti updated, got %s", refreshed.FotoBukti)
+		}
+	})
+
+	// 7. Status selesai with existing photo and no new upload -> 200
+	t.Run("Status selesai with existing photo and no new upload allowed", func(t *testing.T) {
+		req, _ := createAdminMultipartRequest(laporanDesaID, "", "", nil, map[string]string{
+			"status": "selesai",
+		})
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = req
+		c.Params = gin.Params{{Key: "id", Value: laporanDesaID}}
+		c.Set("user_id", adminPemdes.ID)
+		c.Set("role", string(models.RoleAdminPemdes))
+
+		UpdateStatusLaporan(c)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	// 8. Scope regression: Admin PU cannot update non-kabupaten laporan -> 403
+	t.Run("Scope regression: Admin PU forbidden on Desa laporan", func(t *testing.T) {
+		req, _ := createAdminMultipartRequest(laporanDesaID, "", "", nil, map[string]string{
+			"status": "proses",
+		})
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = req
+		c.Params = gin.Params{{Key: "id", Value: laporanDesaID}}
+		c.Set("user_id", adminPU.ID)
+		c.Set("role", string(models.RoleAdminPu))
+
+		UpdateStatusLaporan(c)
+
+		if w.Code != http.StatusForbidden {
+			t.Errorf("expected 403 Forbidden for Admin PU on Desa laporan, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	// 9. Scope regression: Admin PU can update Kabupaten laporan -> 200
+	t.Run("Scope regression: Admin PU allowed on Kabupaten laporan", func(t *testing.T) {
+		req, _ := createAdminMultipartRequest(laporanKabID, "", "", nil, map[string]string{
+			"status": "proses",
+		})
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = req
+		c.Params = gin.Params{{Key: "id", Value: laporanKabID}}
+		c.Set("user_id", adminPU.ID)
+		c.Set("role", string(models.RoleAdminPu))
+
+		UpdateStatusLaporan(c)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200 OK for Admin PU on Kabupaten laporan, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	// 10. Scope regression: Admin Pemdes cannot update Kabupaten laporan -> 403
+	t.Run("Scope regression: Admin Pemdes forbidden on Kabupaten laporan", func(t *testing.T) {
+		req, _ := createAdminMultipartRequest(laporanKabID, "", "", nil, map[string]string{
+			"status": "proses",
+		})
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = req
+		c.Params = gin.Params{{Key: "id", Value: laporanKabID}}
+		c.Set("user_id", adminPemdes.ID)
+		c.Set("role", string(models.RoleAdminPemdes))
+
+		UpdateStatusLaporan(c)
+
+		if w.Code != http.StatusForbidden {
+			t.Errorf("expected 403 Forbidden for Admin Pemdes on Kabupaten laporan, got %d: %s", w.Code, w.Body.String())
+		}
+	})
 }

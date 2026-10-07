@@ -66,7 +66,7 @@ func GetAllUsers(c *gin.Context) {
 
 	if err := query.
 		Preload("Wilayah").
-		Select("id, created_at, updated_at, name, email, role, wilayah_id, profile_photo").
+		Select("id, created_at, updated_at, name, email, role, wilayah_id, profile_photo, phone").
 		Order("id DESC").
 		Limit(limit).
 		Offset(offset).
@@ -199,6 +199,7 @@ func CreateUser(c *gin.Context) {
 		Password:          string(hashedPassword),
 		Role:              role,
 		WilayahID:         input.WilayahID,
+		TokenVersion:      1,
 		PasswordChangedAt: &now,
 	}
 
@@ -293,8 +294,8 @@ func UpdateUser(c *gin.Context) {
 		user.Email = email
 	}
 
-	password := strings.TrimSpace(input.Password)
-	if password != "" {
+	if strings.TrimSpace(input.Password) != "" {
+		password := strings.TrimSpace(input.Password)
 		if len(password) < 6 {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error": "Password minimal 6 karakter",
@@ -311,6 +312,7 @@ func UpdateUser(c *gin.Context) {
 		user.Password = string(hashedPassword)
 		now := time.Now()
 		user.PasswordChangedAt = &now
+		user.TokenVersion = user.TokenVersion + 1
 	}
 
 	roleStr := strings.ToLower(strings.TrimSpace(input.Role))
@@ -340,6 +342,9 @@ func UpdateUser(c *gin.Context) {
 			}
 		}
 
+		if newRole != user.Role {
+			user.TokenVersion = user.TokenVersion + 1
+		}
 		user.Role = newRole
 	}
 
@@ -361,8 +366,20 @@ func UpdateUser(c *gin.Context) {
 			})
 			return
 		}
+		if user.WilayahID == nil || *user.WilayahID != *targetWilayahID {
+			user.TokenVersion = user.TokenVersion + 1
+		}
 		user.WilayahID = targetWilayahID
 	} else {
+		if input.WilayahID != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Hanya Admin Pemdes yang boleh memiliki wilayah",
+			})
+			return
+		}
+		if user.WilayahID != nil {
+			user.TokenVersion = user.TokenVersion + 1
+		}
 		user.WilayahID = nil
 	}
 

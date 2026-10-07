@@ -63,6 +63,12 @@ func CreateWilayah(c *gin.Context) {
 		})
 		return
 	}
+	if len(nama) > 250 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Nama wilayah maksimal 250 karakter",
+		})
+		return
+	}
 
 	tipe := strings.ToLower(strings.TrimSpace(input.Tipe))
 	if tipe != "desa" && tipe != "kabupaten" && tipe != "provinsi" && tipe != "nasional" {
@@ -117,6 +123,12 @@ func UpdateWilayah(c *gin.Context) {
 		})
 		return
 	}
+	if len(nama) > 250 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Nama wilayah maksimal 250 karakter",
+		})
+		return
+	}
 
 	tipe := strings.ToLower(strings.TrimSpace(input.Tipe))
 	if tipe != "desa" && tipe != "kabupaten" && tipe != "provinsi" && tipe != "nasional" {
@@ -160,10 +172,10 @@ func DeleteWilayah(c *gin.Context) {
 	}
 
 	var jumlahUser int64
-	config.DB.Model(&models.User{}).Where("wilayah_id = ? AND deleted_at IS NULL", id).Count(&jumlahUser)
+	config.DB.Model(&models.User{}).Where("wilayah_id = ? AND deleted_at IS NULL", wilayah.ID).Count(&jumlahUser)
 
 	var jumlahLaporan int64
-	config.DB.Model(&models.LaporanKerusakan{}).Where("wilayah_id = ? AND deleted_at IS NULL", id).Count(&jumlahLaporan)
+	config.DB.Model(&models.LaporanKerusakan{}).Where("wilayah_id = ? AND deleted_at IS NULL", wilayah.ID).Count(&jumlahLaporan)
 
 	if jumlahUser > 0 || jumlahLaporan > 0 {
 		c.JSON(http.StatusBadRequest, gin.H{

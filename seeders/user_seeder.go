@@ -2,6 +2,7 @@ package seeders
 
 import (
 	"log"
+	"os"
 
 	"backend-jalan-rusak/models"
 
@@ -10,6 +11,12 @@ import (
 )
 
 func SeedUser(db *gorm.DB) {
+	// 1. Guard pemisahan development vs production
+	if os.Getenv("APP_ENV") == "production" || os.Getenv("SEED_DEV_DATA") == "false" {
+		log.Println("Seeder: Mode production / SEED_DEV_DATA=false, melewati seed user default")
+		return
+	}
+
 	var wilayahIndramayu models.Wilayah
 	if err := db.Where("nama = ?", "Indramayu").First(&wilayahIndramayu).Error; err != nil {
 		log.Println("Seeder User: Wilayah Indramayu belum tersedia, lewati seed user")
