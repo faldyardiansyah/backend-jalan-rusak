@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"backend-jalan-rusak/models"
 	"backend-jalan-rusak/seeders"
@@ -44,6 +45,12 @@ func ConnectDatabase(){
 	})
 	if err != nil {
 		log.Fatalf("Gagal terhhubung ke database MYSQL: %v", err)
+	}
+
+	if sqlDB, errPool := DB.DB(); errPool == nil {
+		sqlDB.SetMaxIdleConns(10)
+		sqlDB.SetMaxOpenConns(100)
+		sqlDB.SetConnMaxLifetime(time.Hour)
 	}
 
 	// ini buat ngelakuin migrasi otomatis setiap modelnya

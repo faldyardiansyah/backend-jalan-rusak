@@ -1,9 +1,7 @@
 package controllers
 
 import (
-	"io"
 	"net/http"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -45,6 +43,14 @@ func IsValidIndonesianPhone(phone string) bool {
 func GetProfile(c *gin.Context) {
 	userID, ok := getUserIDFromContext(c)
 	if !ok {
+		return
+	}
+
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
+		})
 		return
 	}
 
@@ -102,6 +108,14 @@ func UpdateProfile(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
 			"message": "Format request tidak valid: " + err.Error(),
+		})
+		return
+	}
+
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
 		})
 		return
 	}
@@ -215,6 +229,14 @@ func ChangePassword(c *gin.Context) {
 		return
 	}
 
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
+		})
+		return
+	}
+
 	if strings.TrimSpace(input.CurrentPassword) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
@@ -271,6 +293,10 @@ func ChangePassword(c *gin.Context) {
 	now := time.Now()
 	user.Password = string(hashedPassword)
 	user.PasswordChangedAt = &now
+	if user.TokenVersion == 0 {
+		user.TokenVersion = 1
+	}
+	user.TokenVersion++
 
 	if err := config.DB.Save(&user).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -293,6 +319,14 @@ func UploadAvatar(c *gin.Context) {
 		return
 	}
 
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
+		})
+		return
+	}
+
 	fileHeader, err := c.FormFile("avatar")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -302,63 +336,11 @@ func UploadAvatar(c *gin.Context) {
 		return
 	}
 
-	// Validasi ukuran file (maksimal 2 MB)
-	const maxFileSize = 2 * 1024 * 1024
-	if fileHeader.Size > maxFileSize {
+	// Validasi file terpusat via utils.ValidateImageFile (maksimal 2 MB, JPG/PNG/WEBP, byte sniffing)
+	if errVal := utils.ValidateImageFile(fileHeader, 2*1024*1024); errVal != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
-			"message": "Ukuran file avatar melebihi batas maksimal 2 MB",
-		})
-		return
-	}
-
-	// Validasi ekstensi file
-	ext := strings.ToLower(filepath.Ext(fileHeader.Filename))
-	allowedExtensions := map[string]bool{
-		".jpg":  true,
-		".jpeg": true,
-		".png":  true,
-		".webp": true,
-	}
-	if !allowedExtensions[ext] {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  "error",
-			"message": "Ekstensi file tidak didukung. Format yang diizinkan: JPG, PNG, WEBP",
-		})
-		return
-	}
-
-	// Validasi tipe konten / signature byte
-	src, err := fileHeader.Open()
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  "error",
-			"message": "Gagal membaca file avatar",
-		})
-		return
-	}
-	defer src.Close()
-
-	headerBuffer := make([]byte, 512)
-	n, err := src.Read(headerBuffer)
-	if err != nil && err != io.EOF {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  "error",
-			"message": "Gagal memeriksa header file avatar",
-		})
-		return
-	}
-
-	detectedMIME := http.DetectContentType(headerBuffer[:n])
-	allowedMIMEs := map[string]bool{
-		"image/jpeg": true,
-		"image/png":  true,
-		"image/webp": true,
-	}
-	if !allowedMIMEs[detectedMIME] {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  "error",
-			"message": "Tipe file tidak valid. Format yang didukung: image/jpeg, image/png, image/webp",
+			"message": errVal.Error(),
 		})
 		return
 	}
@@ -420,6 +402,14 @@ func UploadAvatar(c *gin.Context) {
 func DeleteAvatar(c *gin.Context) {
 	userID, ok := getUserIDFromContext(c)
 	if !ok {
+		return
+	}
+
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
+		})
 		return
 	}
 

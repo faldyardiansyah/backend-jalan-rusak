@@ -23,17 +23,30 @@ func DeleteLaporanSpam(c *gin.Context) {
 		return
 	}
 
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"error":   "Koneksi database tidak tersedia",
+			"message": "Koneksi database tidak tersedia",
+		})
+		return
+	}
+
 	var laporan models.LaporanKerusakan
 	if err := config.DB.Where("id = ? AND deleted_at IS NULL", id).First(&laporan).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
-			"error": "Laporan kerusakan tidak ditemukan",
+			"status":  "error",
+			"message": "Laporan kerusakan tidak ditemukan",
+			"error":   "Laporan kerusakan tidak ditemukan",
 		})
 		return
 	}
 
 	if err := config.DB.Delete(&laporan).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Gagal menghapus laporan kerusakan",
+			"status":  "error",
+			"message": "Gagal menghapus laporan kerusakan",
+			"error":   "Gagal menghapus laporan kerusakan",
 		})
 		return
 	}

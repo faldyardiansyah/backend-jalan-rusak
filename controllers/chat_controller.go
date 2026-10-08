@@ -1,7 +1,6 @@
 package controllers
 
 import (
-	"io"
 	"mime/multipart"
 	"net/http"
 	"path/filepath"
@@ -124,6 +123,17 @@ func getAuthContext(c *gin.Context) (string, uint, bool) {
 		return "", 0, false
 	}
 
+	if role != string(models.RoleWarga) &&
+		role != string(models.RoleAdminPemdes) &&
+		role != string(models.RoleAdminPu) &&
+		role != string(models.RoleSuperAdmin) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"status":  "error",
+			"message": "Role tidak dikenal atau tidak memiliki hak akses",
+		})
+		return "", 0, false
+	}
+
 	var userID uint
 	switch v := userIDVal.(type) {
 	case uint:
@@ -134,6 +144,14 @@ func getAuthContext(c *gin.Context) (string, uint, bool) {
 		userID = uint(v)
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "User ID tidak valid",
+		})
+		return "", 0, false
+	}
+
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{
 			"status":  "error",
 			"message": "User ID tidak valid",
 		})
@@ -156,6 +174,14 @@ func GetChatByLaporanID(c *gin.Context) {
 
 	roleStr, userID, ok := getAuthContext(c)
 	if !ok {
+		return
+	}
+
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
+		})
 		return
 	}
 
@@ -253,6 +279,14 @@ func SendPesanWarga(c *gin.Context) {
 		return
 	}
 
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
+		})
+		return
+	}
+
 	var laporan models.LaporanKerusakan
 	if err := config.DB.Where("id = ? AND deleted_at IS NULL", laporanID).First(&laporan).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
@@ -317,6 +351,22 @@ func ReplyPesanAdmin(c *gin.Context) {
 		return
 	}
 
+	if roleStr != string(models.RoleAdminPemdes) && roleStr != string(models.RoleAdminPu) && roleStr != string(models.RoleSuperAdmin) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"status":  "error",
+			"message": "Anda tidak memiliki wewenang membalas chat",
+		})
+		return
+	}
+
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
+		})
+		return
+	}
+
 	var chat models.RiwayatChat
 	if err := config.DB.Where("id = ? AND deleted_at IS NULL", chatID).First(&chat).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "Data chat tidak ditemukan"})
@@ -373,14 +423,8 @@ func ReplyPesanAdmin(c *gin.Context) {
 	var fileName string
 
 	if hasFile {
-		if fileHeader.Size > MaxChatAttachmentSizeBytes {
-			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Ukuran file terlalu besar (maksimal 5MB)"})
-			return
-		}
-
-		ext := strings.ToLower(filepath.Ext(fileHeader.Filename))
-		if ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".webp" {
-			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Ekstensi file tidak didukung. Hanya .jpg, .jpeg, .png, .webp yang diizinkan"})
+		if err := utils.ValidateImageFile(fileHeader); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
 			return
 		}
 
@@ -390,23 +434,12 @@ func ReplyPesanAdmin(c *gin.Context) {
 			return
 		}
 		buffer := make([]byte, 512)
-		n, err := file.Read(buffer)
+		n, _ := file.Read(buffer)
 		file.Close()
-		if err != nil && err != io.EOF {
-			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Gagal membaca konten file"})
-			return
-		}
 
 		detectedMime := http.DetectContentType(buffer[:n])
 		detectedMime = strings.Split(detectedMime, ";")[0]
-		detectedMime = strings.TrimSpace(detectedMime)
-
-		if !allowedMimeTypes[detectedMime] {
-			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Format file tidak didukung. Hanya gambar (JPEG, PNG, WEBP) yang diizinkan"})
-			return
-		}
-
-		mimeType = detectedMime
+		mimeType = strings.TrimSpace(detectedMime)
 		fileName = filepath.Base(fileHeader.Filename)
 
 		var errUpload error
@@ -415,6 +448,11 @@ func ReplyPesanAdmin(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Gagal mengunggah lampiran gambar ke server"})
 			return
 		}
+	}
+
+	oldAttachmentURL := ""
+	if chat.LampiranBalasanURL != nil {
+		oldAttachmentURL = *chat.LampiranBalasanURL
 	}
 
 	now := time.Now()
@@ -438,6 +476,11 @@ func ReplyPesanAdmin(c *gin.Context) {
 		return
 	}
 
+	// Clean up overwritten old attachment from Cloudinary if successfully replaced
+	if hasFile && oldAttachmentURL != "" && oldAttachmentURL != uploadedURL {
+		_ = utils.DeleteCloudinary(oldAttachmentURL)
+	}
+
 	if err := config.DB.Preload("User").Preload("Admin").First(&chat, chat.ID).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Gagal memuat balasan chat"})
 		return
@@ -453,6 +496,14 @@ func ReplyPesanAdmin(c *gin.Context) {
 }
 
 func GetAdminInbox(c *gin.Context) {
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
+		})
+		return
+	}
+
 	roleStr, userID, ok := getAuthContext(c)
 	if !ok {
 		return
@@ -473,7 +524,7 @@ func GetAdminInbox(c *gin.Context) {
 			})
 			return
 		}
-		if adminUser.WilayahID == nil {
+		if adminUser.WilayahID == nil || *adminUser.WilayahID == 0 {
 			c.JSON(http.StatusForbidden, gin.H{
 				"status":  "error",
 				"message": "Admin Pemdes belum memiliki wilayah",

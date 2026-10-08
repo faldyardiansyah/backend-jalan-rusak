@@ -62,6 +62,14 @@ func GetSettings(c *gin.Context) {
 		return
 	}
 
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
+		})
+		return
+	}
+
 	var user models.User
 	if err := config.DB.Preload("Wilayah").Where("deleted_at IS NULL").First(&user, userID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
@@ -185,6 +193,14 @@ func UpdateSettings(c *gin.Context) {
 		*input.ReportDisplayPreference = reportVal
 	}
 
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
+		})
+		return
+	}
+
 	var user models.User
 	if err := config.DB.Preload("Wilayah").Where("deleted_at IS NULL").First(&user, userID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
@@ -198,7 +214,7 @@ func UpdateSettings(c *gin.Context) {
 	var pref models.UserPreference
 	if err := config.DB.Where("user_id = ?", user.ID).First(&pref).Error; err != nil {
 		pref = models.NewDefaultUserPreference(user.ID)
-		if errCreate := config.DB.Create(&pref).Error; errCreate != nil {
+		if errCreate := config.DB.FirstOrCreate(&pref, models.UserPreference{UserID: user.ID}).Error; errCreate != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"status":  "error",
 				"message": "Gagal membuat preferensi pengguna",
@@ -283,6 +299,14 @@ func UpdateSettings(c *gin.Context) {
 func LogoutAll(c *gin.Context) {
 	userID, ok := getUserIDFromContext(c)
 	if !ok {
+		return
+	}
+
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
+		})
 		return
 	}
 

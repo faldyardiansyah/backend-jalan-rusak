@@ -51,6 +51,24 @@ func UpdateStatusLaporan(c *gin.Context) {
 		userID = uint(v)
 	}
 
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"message": "User ID tidak valid",
+			"error":   "User ID tidak valid",
+		})
+		return
+	}
+
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
+			"error":   "Koneksi database tidak tersedia",
+		})
+		return
+	}
+
 	// ini buat cari data laporan di databasenya
 	var laporan models.LaporanKerusakan
 	if err := config.DB.Where("id = ? AND deleted_at IS NULL", id).First(&laporan).Error; err != nil {
@@ -84,9 +102,11 @@ func UpdateStatusLaporan(c *gin.Context) {
 			return
 		}
 
-		if adminUser.WilayahID == nil || laporan.WilayahID != *adminUser.WilayahID || jenisJalanLower != "desa" {
+		if adminUser.WilayahID == nil || *adminUser.WilayahID == 0 || laporan.WilayahID != *adminUser.WilayahID || jenisJalanLower != "desa" {
 			c.JSON(http.StatusForbidden, gin.H{
-				"error": "Anda tidak memiliki akses untuk mengubah laporan ini",
+				"status":  "error",
+				"message": "Anda tidak memiliki akses untuk mengubah laporan ini",
+				"error":   "Anda tidak memiliki akses untuk mengubah laporan ini",
 			})
 			return
 		}
@@ -94,7 +114,9 @@ func UpdateStatusLaporan(c *gin.Context) {
 
 	if role == models.RoleAdminPu && jenisJalanLower != "kabupaten" {
 		c.JSON(http.StatusForbidden, gin.H{
-			"error": "Anda tidak memiliki akses untuk mengubah laporan ini",
+			"status":  "error",
+			"message": "Anda tidak memiliki akses untuk mengubah laporan ini",
+			"error":   "Anda tidak memiliki akses untuk mengubah laporan ini",
 		})
 		return
 	}
@@ -109,7 +131,9 @@ func UpdateStatusLaporan(c *gin.Context) {
 	if strings.Contains(c.ContentType(), "application/json") {
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Format JSON tidak valid: " + err.Error(),
+				"status":  "error",
+				"message": "Format JSON tidak valid: " + err.Error(),
+				"error":   "Format JSON tidak valid: " + err.Error(),
 			})
 			return
 		}
@@ -132,7 +156,9 @@ func UpdateStatusLaporan(c *gin.Context) {
 
 	if len(ditugaskanKe) > 150 {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Petugas yang ditugaskan maksimal 150 karakter",
+			"status":  "error",
+			"message": "Petugas yang ditugaskan maksimal 150 karakter",
+			"error":   "Petugas yang ditugaskan maksimal 150 karakter",
 		})
 		return
 	}
@@ -143,7 +169,9 @@ func UpdateStatusLaporan(c *gin.Context) {
 		statusLower = strings.ToLower(status)
 		if statusLower != "menunggu" && statusLower != "proses" && statusLower != "selesai" && statusLower != "ditolak" {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Status tidak valid",
+				"status":  "error",
+				"message": "Status tidak valid",
+				"error":   "Status tidak valid",
 			})
 			return
 		}
@@ -175,7 +203,9 @@ func UpdateStatusLaporan(c *gin.Context) {
 	// Validasi catatan admin jika status baru adalah "ditolak"
 	if statusLower == "ditolak" && catatanAdmin == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Catatan admin / alasan penolakan wajib diisi saat menolak laporan",
+			"status":  "error",
+			"message": "Catatan admin / alasan penolakan wajib diisi saat menolak laporan",
+			"error":   "Catatan admin / alasan penolakan wajib diisi saat menolak laporan",
 		})
 		return
 	}
@@ -185,7 +215,9 @@ func UpdateStatusLaporan(c *gin.Context) {
 	if statusLower == "selesai" {
 		if errFile != nil && laporan.FotoBukti == "" {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Foto bukti perbaikan wajib diunggah untuk menyelesaikan laporan",
+				"status":  "error",
+				"message": "Foto bukti perbaikan wajib diunggah untuk menyelesaikan laporan",
+				"error":   "Foto bukti perbaikan wajib diunggah untuk menyelesaikan laporan",
 			})
 			return
 		}
@@ -206,7 +238,9 @@ func UpdateStatusLaporan(c *gin.Context) {
 		uploadedURL, errUpload := BuktiUploader(fileHeader)
 		if errUpload != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": "Gagal mengupload foto bukti",
+				"status":  "error",
+				"message": "Gagal mengupload foto bukti",
+				"error":   "Gagal mengupload foto bukti",
 			})
 			return
 		}
@@ -238,7 +272,9 @@ func UpdateStatusLaporan(c *gin.Context) {
 			_ = BuktiDeleter(newFotoBukti)
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Gagal menyimpan laporan",
+			"status":  "error",
+			"message": "Gagal menyimpan laporan",
+			"error":   "Gagal menyimpan laporan",
 		})
 		return
 	}
@@ -256,20 +292,24 @@ func UpdateStatusLaporan(c *gin.Context) {
 			pesanNotif += ". Catatan admin: " + catatanAdmin
 		}
 
-		config.DB.Create(&models.Notifikasi{
-			UserID:    laporan.UserID,
-			LaporanID: laporan.ID,
-			Judul:     "Status Laporan Berubah",
-			Pesan:     pesanNotif,
-		})
+		if laporan.UserID > 0 {
+			config.DB.Create(&models.Notifikasi{
+				UserID:    laporan.UserID,
+				LaporanID: laporan.ID,
+				Judul:     "Status Laporan Berubah",
+				Pesan:     pesanNotif,
+			})
+		}
 
 		// Notifikasi otomatis ke admin berwenang jika diupdate oleh pihak lain
 		var adminTujuan []models.User
 		switch strings.ToLower(laporan.JenisJalan) {
 		case "desa":
-			config.DB.
-				Where("role = ? AND wilayah_id = ? AND id != ?", models.RoleAdminPemdes, laporan.WilayahID, userID).
-				Find(&adminTujuan)
+			if laporan.WilayahID > 0 {
+				config.DB.
+					Where("role = ? AND wilayah_id = ? AND id != ?", models.RoleAdminPemdes, laporan.WilayahID, userID).
+					Find(&adminTujuan)
+			}
 		case "kabupaten":
 			config.DB.
 				Where("role = ? AND id != ?", models.RoleAdminPu, userID).
@@ -277,12 +317,14 @@ func UpdateStatusLaporan(c *gin.Context) {
 		}
 
 		for _, admin := range adminTujuan {
-			config.DB.Create(&models.Notifikasi{
-				UserID:    admin.ID,
-				LaporanID: laporan.ID,
-				Judul:     "Status Laporan Berubah",
-				Pesan:     pesanNotif,
-			})
+			if admin.ID > 0 && admin.ID != userID {
+				config.DB.Create(&models.Notifikasi{
+					UserID:    admin.ID,
+					LaporanID: laporan.ID,
+					Judul:     "Status Laporan Berubah",
+					Pesan:     pesanNotif,
+				})
+			}
 		}
 	}
 

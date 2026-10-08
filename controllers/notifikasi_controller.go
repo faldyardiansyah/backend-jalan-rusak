@@ -22,6 +22,21 @@ func getUserIDFromContext(c *gin.Context) (uint, bool) {
 		return 0, false
 	}
 
+	roleVal, existsRole := c.Get("role")
+	if existsRole {
+		roleStr, ok := roleVal.(string)
+		if !ok || (roleStr != string(models.RoleWarga) &&
+			roleStr != string(models.RoleAdminPemdes) &&
+			roleStr != string(models.RoleAdminPu) &&
+			roleStr != string(models.RoleSuperAdmin)) {
+			c.JSON(http.StatusForbidden, gin.H{
+				"status":  "error",
+				"message": "Role tidak dikenal atau tidak memiliki hak akses",
+			})
+			return 0, false
+		}
+	}
+
 	var userID uint
 	switch v := userIDVal.(type) {
 	case uint:
@@ -38,12 +53,28 @@ func getUserIDFromContext(c *gin.Context) (uint, bool) {
 		return 0, false
 	}
 
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"message": "User ID tidak valid",
+		})
+		return 0, false
+	}
+
 	return userID, true
 }
 
 func GetNotifikasiUser(c *gin.Context) {
 	userID, ok := getUserIDFromContext(c)
 	if !ok {
+		return
+	}
+
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
+		})
 		return
 	}
 
@@ -136,6 +167,14 @@ func MarkNotifikasiRead(c *gin.Context) {
 		return
 	}
 
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
+		})
+		return
+	}
+
 	var notifikasi models.Notifikasi
 	if err := config.DB.Where("deleted_at IS NULL").First(&notifikasi, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
@@ -186,6 +225,14 @@ func MarkAllNotifikasiRead(c *gin.Context) {
 		return
 	}
 
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
+		})
+		return
+	}
+
 	// Menggunakan batch UPDATE query langsung di database tanpa memuat data ke memory
 	// GORM otomatis menerapkan deleted_at IS NULL dari gorm.Model
 	if err := config.DB.Model(&models.Notifikasi{}).
@@ -216,6 +263,14 @@ func DeleteNotifikasi(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
 			"message": "ID notifikasi tidak valid",
+		})
+		return
+	}
+
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
 		})
 		return
 	}
@@ -255,10 +310,17 @@ func DeleteNotifikasi(c *gin.Context) {
 
 // KirimNotifikasiChatWarga mengirimkan notifikasi ke admin yang berwenang saat warga mengirim pesan baru
 func KirimNotifikasiChatWarga(laporan models.LaporanKerusakan) {
+	if config.DB == nil || laporan.ID == 0 {
+		return
+	}
+
 	var adminTujuan []models.User
 
 	switch strings.ToLower(laporan.JenisJalan) {
 	case "desa":
+		if laporan.WilayahID == 0 {
+			return
+		}
 		config.DB.
 			Where("role = ? AND wilayah_id = ?", models.RoleAdminPemdes, laporan.WilayahID).
 			Find(&adminTujuan)
@@ -270,17 +332,23 @@ func KirimNotifikasiChatWarga(laporan models.LaporanKerusakan) {
 
 	laporanIDStr := strconv.FormatUint(uint64(laporan.ID), 10)
 	for _, admin := range adminTujuan {
-		config.DB.Create(&models.Notifikasi{
-			UserID:    admin.ID,
-			LaporanID: laporan.ID,
-			Judul:     "Pesan Baru Masuk",
-			Pesan:     "Warga mengirim pesan pada laporan #" + laporanIDStr,
-		})
+		if admin.ID > 0 && admin.ID != laporan.UserID {
+			config.DB.Create(&models.Notifikasi{
+				UserID:    admin.ID,
+				LaporanID: laporan.ID,
+				Judul:     "Pesan Baru Masuk",
+				Pesan:     "Warga mengirim pesan pada laporan #" + laporanIDStr,
+			})
+		}
 	}
 }
 
 // KirimNotifikasiBalasanAdmin mengirimkan notifikasi ke warga pemilik laporan saat admin membalas pesan
 func KirimNotifikasiBalasanAdmin(laporan models.LaporanKerusakan) {
+	if config.DB == nil || laporan.ID == 0 || laporan.UserID == 0 {
+		return
+	}
+
 	laporanIDStr := strconv.FormatUint(uint64(laporan.ID), 10)
 	config.DB.Create(&models.Notifikasi{
 		UserID:    laporan.UserID,

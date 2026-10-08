@@ -60,7 +60,23 @@ func CreateLaporan(c *gin.Context) {
 		return
 	}
 
-	userID := userIDVal.(uint)
+	var userID uint
+	switch v := userIDVal.(type) {
+	case uint:
+		userID = v
+	case float64:
+		userID = uint(v)
+	case int:
+		userID = uint(v)
+	}
+
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"message": "User ID tidak valid",
+		})
+		return
+	}
 	judul := strings.TrimSpace(c.PostForm("judul"))
 	if judul == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -127,7 +143,10 @@ func CreateLaporan(c *gin.Context) {
 	fileHeader, err := c.FormFile("foto")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "foto laporan wajib di unggah"})
+			"status":  "error",
+			"message": "foto laporan wajib di unggah",
+			"error":   "foto laporan wajib di unggah",
+		})
 		return
 	}
 
@@ -170,6 +189,15 @@ func CreateLaporan(c *gin.Context) {
 			"status":  "error",
 			"message": "Wilayah tidak ditemukan, mohon pilih manual",
 			"error":   "Wilayah tidak ditemukan, mohon pilih manual",
+		})
+		return
+	}
+
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
+			"error":   "Koneksi database tidak tersedia",
 		})
 		return
 	}
@@ -268,7 +296,34 @@ func GetLaporanByID(c *gin.Context) {
 		})
 		return
 	}
-	userID := userIDVal.(uint)
+
+	var userID uint
+	switch v := userIDVal.(type) {
+	case uint:
+		userID = v
+	case float64:
+		userID = uint(v)
+	case int:
+		userID = uint(v)
+	}
+
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"message": "User ID tidak valid",
+			"error":   "User ID tidak valid",
+		})
+		return
+	}
+
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
+			"error":   "Koneksi database tidak tersedia",
+		})
+		return
+	}
 
 	var laporan models.LaporanKerusakan
 	if err := config.DB.Where("id = ? AND deleted_at IS NULL", id).First(&laporan).Error; err != nil {
@@ -297,10 +352,17 @@ func GetLaporanByID(c *gin.Context) {
 }
 
 func KirimNotifikasiLaporanBaru(laporan models.LaporanKerusakan) {
+	if config.DB == nil || laporan.ID == 0 {
+		return
+	}
+
 	var adminTujuan []models.User
 
 	switch strings.ToLower(laporan.JenisJalan) {
 	case "desa":
+		if laporan.WilayahID == 0 {
+			return
+		}
 		config.DB.
 			Where("role = ? AND wilayah_id = ?", models.RoleAdminPemdes, laporan.WilayahID).
 			Find(&adminTujuan)
@@ -310,34 +372,75 @@ func KirimNotifikasiLaporanBaru(laporan models.LaporanKerusakan) {
 			Find(&adminTujuan)
 	}
 
+	pengirim := "Warga"
+	if strings.TrimSpace(laporan.User.Name) != "" {
+		pengirim = strings.TrimSpace(laporan.User.Name)
+	}
+
 	for _, admin := range adminTujuan {
-		config.DB.Create(&models.Notifikasi{
-			UserID:    admin.ID,
-			LaporanID: laporan.ID,
-			Judul:     "Laporan Baru Masuk",
-			Pesan:     "Laporan baru telah dikirimkan oleh " + laporan.User.Name,
-		})
+		if admin.ID > 0 {
+			config.DB.Create(&models.Notifikasi{
+				UserID:    admin.ID,
+				LaporanID: laporan.ID,
+				Judul:     "Laporan Baru Masuk",
+				Pesan:     "Laporan baru telah dikirimkan oleh " + pengirim,
+			})
+		}
 	}
 }
 
 func GetRiwayatLaporan(c *gin.Context) {
-	userIDVal, exists := c.Get("user_id")
-
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "User tidak terautentikasi",
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
+			"error":   "Koneksi database tidak tersedia",
 		})
 		return
 	}
 
-	userID := userIDVal.(uint)
+	userIDVal, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"error":   "User tidak terautentikasi",
+			"message": "User tidak terautentikasi",
+		})
+		return
+	}
+
+	var userID uint
+	switch v := userIDVal.(type) {
+	case uint:
+		userID = v
+	case float64:
+		userID = uint(v)
+	case int:
+		userID = uint(v)
+	}
+
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"error":   "User ID tidak valid",
+			"message": "User ID tidak valid",
+		})
+		return
+	}
 
 	var listLaporan []models.LaporanKerusakan
 
-	config.DB.
+	if err := config.DB.
 		Where("user_id = ? AND deleted_at IS NULL", userID).
 		Order("created_at DESC").
-		Find(&listLaporan)
+		Find(&listLaporan).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"error":   "Gagal mengambil riwayat laporan",
+			"message": "Gagal mengambil riwayat laporan",
+		})
+		return
+	}
 
 	responseData := make([]LaporanResponse, 0)
 
@@ -353,11 +456,60 @@ func GetRiwayatLaporan(c *gin.Context) {
 }
 
 func GetAllLaporanPeta(c *gin.Context) {
-	var listLaporan []models.LaporanKerusakan
+	userIDVal, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"message": "User tidak terautentikasi",
+		})
+		return
+	}
 
-	if err := config.DB.
-		Where("laporan_kerusakan.deleted_at IS NULL").
-		Find(&listLaporan).Error; err != nil {
+	var userID uint
+	switch v := userIDVal.(type) {
+	case uint:
+		userID = v
+	case float64:
+		userID = uint(v)
+	case int:
+		userID = uint(v)
+	}
+
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"message": "User ID tidak valid",
+		})
+		return
+	}
+
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
+		})
+		return
+	}
+
+	query := config.DB.Model(&models.LaporanKerusakan{}).
+		Where("deleted_at IS NULL")
+
+	if status := strings.ToLower(strings.TrimSpace(c.Query("status"))); status != "" {
+		query = query.Where("status = ?", status)
+	}
+
+	if jenisJalan := strings.ToLower(strings.TrimSpace(c.Query("jenis_jalan"))); jenisJalan != "" && jenisJalan != "all" {
+		query = query.Where("jenis_jalan = ?", jenisJalan)
+	}
+
+	if wilayahIDStr := strings.TrimSpace(c.Query("wilayah_id")); wilayahIDStr != "" {
+		if wID, err := strconv.ParseUint(wilayahIDStr, 10, 32); err == nil && wID > 0 {
+			query = query.Where("wilayah_id = ?", uint(wID))
+		}
+	}
+
+	var listLaporan []models.LaporanKerusakan
+	if err := query.Find(&listLaporan).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
 			"message": "Gagal mengambil data laporan untuk peta",
@@ -366,7 +518,6 @@ func GetAllLaporanPeta(c *gin.Context) {
 	}
 
 	responseData := make([]LaporanResponse, 0)
-
 	for _, lap := range listLaporan {
 		if !utils.IsValidCoordinate(lap.Latitude, lap.Longitude) {
 			continue

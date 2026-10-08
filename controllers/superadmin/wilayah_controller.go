@@ -2,6 +2,7 @@ package superadmin
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"backend-jalan-rusak/config"
@@ -11,6 +12,14 @@ import (
 )
 
 func GetAllWilayah(c *gin.Context) {
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
+		})
+		return
+	}
+
 	wilayahList := make([]models.Wilayah, 0)
 	if err := config.DB.Where("deleted_at IS NULL").Order("nama ASC").Find(&wilayahList).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -27,10 +36,27 @@ func GetAllWilayah(c *gin.Context) {
 }
 
 func ShowWilayah(c *gin.Context) {
-	id := c.Param("id")
+	idStr := c.Param("id")
+	id, errID := strconv.ParseUint(idStr, 10, 32)
+	if errID != nil || id == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"error":   "ID wilayah tidak valid",
+			"message": "ID wilayah tidak valid",
+		})
+		return
+	}
+
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  "Koneksi database tidak tersedia",
+		})
+		return
+	}
 
 	var wilayah models.Wilayah
-	if err := config.DB.Where("deleted_at IS NULL").First(&wilayah, id).Error; err != nil {
+	if err := config.DB.Where("deleted_at IS NULL").First(&wilayah, uint(id)).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"status": "error",
 			"error":  "Wilayah tidak ditemukan",
@@ -52,20 +78,28 @@ type CreateWilayahInput struct {
 func CreateWilayah(c *gin.Context) {
 	var input CreateWilayahInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Input tidak valid: " + err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Input tidak valid: " + err.Error(),
+			"error":   "Input tidak valid: " + err.Error(),
+		})
 		return
 	}
 
 	nama := strings.TrimSpace(input.Nama)
 	if nama == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Nama wilayah tidak boleh kosong",
+			"status":  "error",
+			"message": "Nama wilayah tidak boleh kosong",
+			"error":   "Nama wilayah tidak boleh kosong",
 		})
 		return
 	}
 	if len(nama) > 250 {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Nama wilayah maksimal 250 karakter",
+			"status":  "error",
+			"message": "Nama wilayah maksimal 250 karakter",
+			"error":   "Nama wilayah maksimal 250 karakter",
 		})
 		return
 	}
@@ -73,7 +107,18 @@ func CreateWilayah(c *gin.Context) {
 	tipe := strings.ToLower(strings.TrimSpace(input.Tipe))
 	if tipe != "desa" && tipe != "kabupaten" && tipe != "provinsi" && tipe != "nasional" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Tipe harus salah satu dari: desa, kabupaten, provinsi, nasional",
+			"status":  "error",
+			"message": "Tipe harus salah satu dari: desa, kabupaten, provinsi, nasional",
+			"error":   "Tipe harus salah satu dari: desa, kabupaten, provinsi, nasional",
+		})
+		return
+	}
+
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
+			"error":   "Koneksi database tidak tersedia",
 		})
 		return
 	}
@@ -82,7 +127,9 @@ func CreateWilayah(c *gin.Context) {
 	var existing models.Wilayah
 	if err := config.DB.Where("LOWER(nama) = ? AND LOWER(tipe) = ? AND deleted_at IS NULL", strings.ToLower(nama), tipe).First(&existing).Error; err == nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Wilayah dengan nama dan tipe tersebut sudah ada",
+			"status":  "error",
+			"message": "Wilayah dengan nama dan tipe tersebut sudah ada",
+			"error":   "Wilayah dengan nama dan tipe tersebut sudah ada",
 		})
 		return
 	}
@@ -90,7 +137,11 @@ func CreateWilayah(c *gin.Context) {
 	wilayah := models.Wilayah{Nama: nama, Tipe: tipe}
 
 	if err := config.DB.Create(&wilayah).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menambahkan wilayah"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Gagal menambahkan wilayah",
+			"error":   "Gagal menambahkan wilayah",
+		})
 		return
 	}
 
@@ -102,30 +153,60 @@ func CreateWilayah(c *gin.Context) {
 }
 
 func UpdateWilayah(c *gin.Context) {
-	id := c.Param("id")
+	idStr := c.Param("id")
+	id, errID := strconv.ParseUint(idStr, 10, 32)
+	if errID != nil || id == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"error":   "ID wilayah tidak valid",
+			"message": "ID wilayah tidak valid",
+		})
+		return
+	}
+
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
+			"error":   "Koneksi database tidak tersedia",
+		})
+		return
+	}
 
 	var wilayah models.Wilayah
-	if err := config.DB.Where("deleted_at IS NULL").First(&wilayah, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Wilayah tidak ditemukan"})
+	if err := config.DB.Where("deleted_at IS NULL").First(&wilayah, uint(id)).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status":  "error",
+			"message": "Wilayah tidak ditemukan",
+			"error":   "Wilayah tidak ditemukan",
+		})
 		return
 	}
 
 	var input CreateWilayahInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Input tidak valid: " + err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Input tidak valid: " + err.Error(),
+			"error":   "Input tidak valid: " + err.Error(),
+		})
 		return
 	}
 
 	nama := strings.TrimSpace(input.Nama)
 	if nama == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Nama wilayah tidak boleh kosong",
+			"status":  "error",
+			"message": "Nama wilayah tidak boleh kosong",
+			"error":   "Nama wilayah tidak boleh kosong",
 		})
 		return
 	}
 	if len(nama) > 250 {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Nama wilayah maksimal 250 karakter",
+			"status":  "error",
+			"message": "Nama wilayah maksimal 250 karakter",
+			"error":   "Nama wilayah maksimal 250 karakter",
 		})
 		return
 	}
@@ -133,7 +214,9 @@ func UpdateWilayah(c *gin.Context) {
 	tipe := strings.ToLower(strings.TrimSpace(input.Tipe))
 	if tipe != "desa" && tipe != "kabupaten" && tipe != "provinsi" && tipe != "nasional" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Tipe harus salah satu dari: desa, kabupaten, provinsi, nasional",
+			"status":  "error",
+			"message": "Tipe harus salah satu dari: desa, kabupaten, provinsi, nasional",
+			"error":   "Tipe harus salah satu dari: desa, kabupaten, provinsi, nasional",
 		})
 		return
 	}
@@ -142,7 +225,9 @@ func UpdateWilayah(c *gin.Context) {
 	var existing models.Wilayah
 	if err := config.DB.Where("LOWER(nama) = ? AND LOWER(tipe) = ? AND id != ? AND deleted_at IS NULL", strings.ToLower(nama), tipe, wilayah.ID).First(&existing).Error; err == nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Wilayah dengan nama dan tipe tersebut sudah ada",
+			"status":  "error",
+			"message": "Wilayah dengan nama dan tipe tersebut sudah ada",
+			"error":   "Wilayah dengan nama dan tipe tersebut sudah ada",
 		})
 		return
 	}
@@ -151,7 +236,11 @@ func UpdateWilayah(c *gin.Context) {
 	wilayah.Tipe = tipe
 
 	if err := config.DB.Save(&wilayah).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memperbarui wilayah"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Gagal memperbarui wilayah",
+			"error":   "Gagal memperbarui wilayah",
+		})
 		return
 	}
 
@@ -163,11 +252,33 @@ func UpdateWilayah(c *gin.Context) {
 }
 
 func DeleteWilayah(c *gin.Context) {
-	id := c.Param("id")
+	idStr := c.Param("id")
+	id, errID := strconv.ParseUint(idStr, 10, 32)
+	if errID != nil || id == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"error":   "ID wilayah tidak valid",
+			"message": "ID wilayah tidak valid",
+		})
+		return
+	}
+
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
+			"error":   "Koneksi database tidak tersedia",
+		})
+		return
+	}
 
 	var wilayah models.Wilayah
-	if err := config.DB.Where("deleted_at IS NULL").First(&wilayah, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Wilayah tidak ditemukan"})
+	if err := config.DB.Where("deleted_at IS NULL").First(&wilayah, uint(id)).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status":  "error",
+			"message": "Wilayah tidak ditemukan",
+			"error":   "Wilayah tidak ditemukan",
+		})
 		return
 	}
 
@@ -179,13 +290,19 @@ func DeleteWilayah(c *gin.Context) {
 
 	if jumlahUser > 0 || jumlahLaporan > 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Wilayah tidak dapat dihapus karena masih digunakan oleh user atau laporan",
+			"status":  "error",
+			"message": "Wilayah tidak dapat dihapus karena masih digunakan oleh user atau laporan",
+			"error":   "Wilayah tidak dapat dihapus karena masih digunakan oleh user atau laporan",
 		})
 		return
 	}
 
 	if err := config.DB.Delete(&wilayah).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menghapus wilayah"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Gagal menghapus wilayah",
+			"error":   "Gagal menghapus wilayah",
+		})
 		return
 	}
 

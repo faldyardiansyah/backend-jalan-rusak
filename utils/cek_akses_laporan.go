@@ -9,7 +9,7 @@ import (
 
 // CekAksesLaporan memvalidasi apakah role dan user tertentu berhak mengakses laporan kerusakan
 func CekAksesLaporan(role string, userID uint, laporan models.LaporanKerusakan) bool {
-	if laporan.DeletedAt.Valid {
+	if laporan.ID == 0 || userID == 0 || laporan.DeletedAt.Valid {
 		return false
 	}
 
@@ -24,11 +24,15 @@ func CekAksesLaporan(role string, userID uint, laporan models.LaporanKerusakan) 
 			return false
 		}
 
+		if config.DB == nil {
+			return false
+		}
+
 		var admin models.User
 		if err := config.DB.First(&admin, userID).Error; err != nil {
 			return false
 		}
-		return admin.WilayahID != nil && laporan.WilayahID > 0 && *admin.WilayahID == laporan.WilayahID
+		return admin.WilayahID != nil && *admin.WilayahID > 0 && laporan.WilayahID > 0 && *admin.WilayahID == laporan.WilayahID
 
 	case string(models.RoleAdminPu):
 		if jenisJalan != "kabupaten" {

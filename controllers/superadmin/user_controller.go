@@ -17,6 +17,14 @@ import (
 var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
 
 func GetAllUsers(c *gin.Context) {
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
+		})
+		return
+	}
+
 	roleFilter := strings.TrimSpace(c.Query("role"))
 	searchKeyword := strings.TrimSpace(c.Query("search"))
 	pageStr := c.DefaultQuery("page", "1")
@@ -25,6 +33,9 @@ func GetAllUsers(c *gin.Context) {
 	page, errPage := strconv.Atoi(pageStr)
 	if errPage != nil || page < 1 {
 		page = 1
+	}
+	if page > 100000 {
+		page = 100000
 	}
 	limit, errLimit := strconv.Atoi(limitStr)
 	if errLimit != nil || limit < 1 {
@@ -44,7 +55,15 @@ func GetAllUsers(c *gin.Context) {
 		Where("deleted_at IS NULL")
 
 	if roleFilter != "" {
-		query = query.Where("role = ?", roleFilter)
+		roleLower := strings.ToLower(roleFilter)
+		if roleLower == string(models.RoleWarga) ||
+			roleLower == string(models.RoleAdminPemdes) ||
+			roleLower == string(models.RoleAdminPu) ||
+			roleLower == string(models.RoleSuperAdmin) {
+			query = query.Where("role = ?", roleLower)
+		} else {
+			query = query.Where("1 = 0")
+		}
 	}
 
 	if searchKeyword != "" {
@@ -84,6 +103,7 @@ func GetAllUsers(c *gin.Context) {
 			"users":      users,
 			"page":       page,
 			"limit":      limit,
+			"total":      totalData,
 			"total_data": totalData,
 		},
 	})
@@ -102,7 +122,9 @@ func CreateUser(c *gin.Context) {
 
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": InputErrorMsg(err),
+			"status":  "error",
+			"message": InputErrorMsg(err),
+			"error":   InputErrorMsg(err),
 		})
 		return
 	}
@@ -110,7 +132,9 @@ func CreateUser(c *gin.Context) {
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Nama tidak boleh kosong",
+			"status":  "error",
+			"message": "Nama tidak boleh kosong",
+			"error":   "Nama tidak boleh kosong",
 		})
 		return
 	}
@@ -118,7 +142,9 @@ func CreateUser(c *gin.Context) {
 	email := strings.ToLower(strings.TrimSpace(input.Email))
 	if email == "" || !emailRegex.MatchString(email) {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Format email tidak valid",
+			"status":  "error",
+			"message": "Format email tidak valid",
+			"error":   "Format email tidak valid",
 		})
 		return
 	}
@@ -126,13 +152,17 @@ func CreateUser(c *gin.Context) {
 	password := strings.TrimSpace(input.Password)
 	if password == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Password tidak boleh kosong atau hanya berisi spasi",
+			"status":  "error",
+			"message": "Password tidak boleh kosong atau hanya berisi spasi",
+			"error":   "Password tidak boleh kosong atau hanya berisi spasi",
 		})
 		return
 	}
 	if len(password) < 6 {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Password minimal 6 karakter",
+			"status":  "error",
+			"message": "Password minimal 6 karakter",
+			"error":   "Password minimal 6 karakter",
 		})
 		return
 	}
@@ -143,7 +173,9 @@ func CreateUser(c *gin.Context) {
 		role != models.RoleSuperAdmin &&
 		role != models.RoleWarga {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Role harus salah satu dari: warga, admin_pemdes, admin_pu, super_admin",
+			"status":  "error",
+			"message": "Role harus salah satu dari: warga, admin_pemdes, admin_pu, super_admin",
+			"error":   "Role harus salah satu dari: warga, admin_pemdes, admin_pu, super_admin",
 		})
 		return
 	}
@@ -151,21 +183,39 @@ func CreateUser(c *gin.Context) {
 	if role == models.RoleAdminPemdes {
 		if input.WilayahID == nil {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Admin pemdes wajib memiliki wilayah",
-			})
-			return
-		}
-		var w models.Wilayah
-		if err := config.DB.Where("deleted_at IS NULL").First(&w, *input.WilayahID).Error; err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Wilayah yang dipilih tidak valid atau tidak ditemukan",
+				"status":  "error",
+				"message": "Admin pemdes wajib memiliki wilayah",
+				"error":   "Admin pemdes wajib memiliki wilayah",
 			})
 			return
 		}
 	} else {
 		if input.WilayahID != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Hanya Admin Pemdes yang boleh memiliki wilayah",
+				"status":  "error",
+				"message": "Hanya Admin Pemdes yang boleh memiliki wilayah",
+				"error":   "Hanya Admin Pemdes yang boleh memiliki wilayah",
+			})
+			return
+		}
+	}
+
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"error":   "Koneksi database tidak tersedia",
+			"message": "Koneksi database tidak tersedia",
+		})
+		return
+	}
+
+	if role == models.RoleAdminPemdes {
+		var w models.Wilayah
+		if err := config.DB.Where("deleted_at IS NULL").First(&w, *input.WilayahID).Error; err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  "error",
+				"message": "Wilayah yang dipilih tidak valid atau tidak ditemukan",
+				"error":   "Wilayah yang dipilih tidak valid atau tidak ditemukan",
 			})
 			return
 		}
@@ -176,7 +226,9 @@ func CreateUser(c *gin.Context) {
 		Where("LOWER(email) = ? AND deleted_at IS NULL", email).
 		First(&existingUser).Error; err == nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Email sudah terdaftar",
+			"status":  "error",
+			"message": "Email sudah terdaftar",
+			"error":   "Email sudah terdaftar",
 		})
 		return
 	}
@@ -187,7 +239,9 @@ func CreateUser(c *gin.Context) {
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Gagal mengenkripsi password",
+			"status":  "error",
+			"message": "Gagal mengenkripsi password",
+			"error":   "Gagal mengenkripsi password",
 		})
 		return
 	}
@@ -205,7 +259,9 @@ func CreateUser(c *gin.Context) {
 
 	if err := config.DB.Create(&newUser).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Gagal membuat pengguna",
+			"status":  "error",
+			"message": "Gagal membuat pengguna",
+			"error":   "Gagal membuat pengguna",
 		})
 		return
 	}
@@ -221,15 +277,35 @@ func CreateUser(c *gin.Context) {
 }
 
 func ShowUser(c *gin.Context) {
-	id := c.Param("id")
+	idStr := c.Param("id")
+	id, errID := strconv.ParseUint(idStr, 10, 32)
+	if errID != nil || id == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"error":   "ID pengguna tidak valid",
+			"message": "ID pengguna tidak valid",
+		})
+		return
+	}
+
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"error":   "Koneksi database tidak tersedia",
+			"message": "Koneksi database tidak tersedia",
+		})
+		return
+	}
 
 	var user models.User
 	if err := config.DB.
 		Preload("Wilayah").
 		Where("deleted_at IS NULL").
-		First(&user, id).Error; err != nil {
+		First(&user, uint(id)).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
-			"error": "Pengguna tidak ditemukan",
+			"status":  "error",
+			"message": "Pengguna tidak ditemukan",
+			"error":   "Pengguna tidak ditemukan",
 		})
 		return
 	}
@@ -251,12 +327,32 @@ type UpdateUserInput struct {
 }
 
 func UpdateUser(c *gin.Context) {
-	id := c.Param("id")
+	idStr := c.Param("id")
+	id, errID := strconv.ParseUint(idStr, 10, 32)
+	if errID != nil || id == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"error":   "ID pengguna tidak valid",
+			"message": "ID pengguna tidak valid",
+		})
+		return
+	}
+
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"error":   "Koneksi database tidak tersedia",
+			"message": "Koneksi database tidak tersedia",
+		})
+		return
+	}
 
 	var user models.User
-	if err := config.DB.Where("deleted_at IS NULL").First(&user, id).Error; err != nil {
+	if err := config.DB.Where("deleted_at IS NULL").First(&user, uint(id)).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
-			"error": "Pengguna tidak ditemukan",
+			"status":  "error",
+			"message": "Pengguna tidak ditemukan",
+			"error":   "Pengguna tidak ditemukan",
 		})
 		return
 	}
@@ -264,7 +360,9 @@ func UpdateUser(c *gin.Context) {
 	var input UpdateUserInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": err.Error(),
+			"status":  "error",
+			"message": err.Error(),
+			"error":   err.Error(),
 		})
 		return
 	}
@@ -278,7 +376,9 @@ func UpdateUser(c *gin.Context) {
 	if email != "" && email != strings.ToLower(user.Email) {
 		if !emailRegex.MatchString(email) {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Format email tidak valid",
+				"status":  "error",
+				"message": "Format email tidak valid",
+				"error":   "Format email tidak valid",
 			})
 			return
 		}
@@ -287,7 +387,9 @@ func UpdateUser(c *gin.Context) {
 			Where("LOWER(email) = ? AND id != ? AND deleted_at IS NULL", email, user.ID).
 			First(&existingUser).Error; err == nil {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Email sudah terdaftar",
+				"status":  "error",
+				"message": "Email sudah terdaftar",
+				"error":   "Email sudah terdaftar",
 			})
 			return
 		}
@@ -298,14 +400,18 @@ func UpdateUser(c *gin.Context) {
 		password := strings.TrimSpace(input.Password)
 		if len(password) < 6 {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Password minimal 6 karakter",
+				"status":  "error",
+				"message": "Password minimal 6 karakter",
+				"error":   "Password minimal 6 karakter",
 			})
 			return
 		}
 		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": "Gagal mengenkripsi password",
+				"status":  "error",
+				"message": "Gagal mengenkripsi password",
+				"error":   "Gagal mengenkripsi password",
 			})
 			return
 		}
@@ -323,7 +429,9 @@ func UpdateUser(c *gin.Context) {
 			newRole != models.RoleSuperAdmin &&
 			newRole != models.RoleWarga {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Role tidak valid",
+				"status":  "error",
+				"message": "Role tidak valid",
+				"error":   "Role tidak valid",
 			})
 			return
 		}
@@ -336,7 +444,9 @@ func UpdateUser(c *gin.Context) {
 				Count(&countSuperadmin)
 			if countSuperadmin == 0 {
 				c.JSON(http.StatusBadRequest, gin.H{
-					"error": "Tidak dapat mengubah role Superadmin terakhir",
+					"status":  "error",
+					"message": "Tidak dapat mengubah role Superadmin terakhir",
+					"error":   "Tidak dapat mengubah role Superadmin terakhir",
 				})
 				return
 			}
@@ -355,14 +465,18 @@ func UpdateUser(c *gin.Context) {
 		}
 		if targetWilayahID == nil {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Admin pemdes wajib memiliki wilayah",
+				"status":  "error",
+				"message": "Admin pemdes wajib memiliki wilayah",
+				"error":   "Admin pemdes wajib memiliki wilayah",
 			})
 			return
 		}
 		var w models.Wilayah
 		if err := config.DB.Where("deleted_at IS NULL").First(&w, *targetWilayahID).Error; err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Wilayah yang dipilih tidak valid atau tidak ditemukan",
+				"status":  "error",
+				"message": "Wilayah yang dipilih tidak valid atau tidak ditemukan",
+				"error":   "Wilayah yang dipilih tidak valid atau tidak ditemukan",
 			})
 			return
 		}
@@ -373,7 +487,9 @@ func UpdateUser(c *gin.Context) {
 	} else {
 		if input.WilayahID != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Hanya Admin Pemdes yang boleh memiliki wilayah",
+				"status":  "error",
+				"message": "Hanya Admin Pemdes yang boleh memiliki wilayah",
+				"error":   "Hanya Admin Pemdes yang boleh memiliki wilayah",
 			})
 			return
 		}
@@ -385,7 +501,9 @@ func UpdateUser(c *gin.Context) {
 
 	if err := config.DB.Save(&user).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Gagal memperbarui pengguna",
+			"status":  "error",
+			"message": "Gagal memperbarui pengguna",
+			"error":   "Gagal memperbarui pengguna",
 		})
 		return
 	}
@@ -401,12 +519,13 @@ func UpdateUser(c *gin.Context) {
 }
 
 func DeleteUser(c *gin.Context) {
-	id := c.Param("id")
-
-	var user models.User
-	if err := config.DB.Where("deleted_at IS NULL").First(&user, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": "Pengguna tidak ditemukan",
+	idStr := c.Param("id")
+	id, errID := strconv.ParseUint(idStr, 10, 32)
+	if errID != nil || id == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"error":   "ID pengguna tidak valid",
+			"message": "ID pengguna tidak valid",
 		})
 		return
 	}
@@ -422,12 +541,33 @@ func DeleteUser(c *gin.Context) {
 		case int:
 			callerID = uint(v)
 		}
-		if callerID == user.ID {
+		if callerID == uint(id) {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Tidak dapat menghapus akun sendiri",
+				"status":  "error",
+				"message": "Tidak dapat menghapus akun sendiri",
+				"error":   "Tidak dapat menghapus akun sendiri",
 			})
 			return
 		}
+	}
+
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"error":   "Koneksi database tidak tersedia",
+			"message": "Koneksi database tidak tersedia",
+		})
+		return
+	}
+
+	var user models.User
+	if err := config.DB.Where("deleted_at IS NULL").First(&user, uint(id)).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status":  "error",
+			"message": "Pengguna tidak ditemukan",
+			"error":   "Pengguna tidak ditemukan",
+		})
+		return
 	}
 
 	if user.Role == models.RoleSuperAdmin {
@@ -437,7 +577,9 @@ func DeleteUser(c *gin.Context) {
 			Count(&countSuperadmin)
 		if countSuperadmin == 0 {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Tidak dapat menghapus Superadmin terakhir",
+				"status":  "error",
+				"message": "Tidak dapat menghapus Superadmin terakhir",
+				"error":   "Tidak dapat menghapus Superadmin terakhir",
 			})
 			return
 		}
@@ -445,14 +587,18 @@ func DeleteUser(c *gin.Context) {
 
 	if user.Role == models.RoleWarga {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Tidak dapat menghapus warga",
+			"status":  "error",
+			"message": "Tidak dapat menghapus warga",
+			"error":   "Tidak dapat menghapus warga",
 		})
 		return
 	}
 
 	if err := config.DB.Delete(&user).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Gagal menghapus pengguna",
+			"status":  "error",
+			"message": "Gagal menghapus pengguna",
+			"error":   "Gagal menghapus pengguna",
 		})
 		return
 	}

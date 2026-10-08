@@ -66,13 +66,21 @@ func GetAllLaporan(c *gin.Context) {
 	}
 	offset := (page - 1) * limit
 
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
+		})
+		return
+	}
+
 	listLaporan := make([]models.LaporanKerusakan, 0)
 	var totalData int64
 
 	query := config.DB.Model(&models.LaporanKerusakan{}).
 		Preload("User").
 		Preload("Wilayah").
-		Joins("JOIN user ON user.id = laporan_kerusakan.user_id").
+		Joins("LEFT JOIN user ON user.id = laporan_kerusakan.user_id AND user.deleted_at IS NULL").
 		Where("laporan_kerusakan.deleted_at IS NULL")
 
 	switch role {
@@ -86,7 +94,7 @@ func GetAllLaporan(c *gin.Context) {
 			return
 		}
 
-		if adminUser.WilayahID == nil {
+		if adminUser.WilayahID == nil || *adminUser.WilayahID == 0 {
 			c.JSON(http.StatusForbidden, gin.H{
 				"status":  "error",
 				"message": "Admin Pemdes belum memiliki wilayah",
@@ -131,7 +139,9 @@ func GetAllLaporan(c *gin.Context) {
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Gagal mengambil laporan kerusakan",
+			"status":  "error",
+			"message": "Gagal mengambil laporan kerusakan",
+			"error":   "Gagal mengambil laporan kerusakan",
 		})
 		return
 	}
@@ -190,6 +200,14 @@ func GetLaporanByID(c *gin.Context) {
 		return
 	}
 
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
+		})
+		return
+	}
+
 	var laporan models.LaporanKerusakan
 	query := config.DB.Model(&models.LaporanKerusakan{}).
 		Preload("User").
@@ -207,7 +225,7 @@ func GetLaporanByID(c *gin.Context) {
 			return
 		}
 
-		if adminUser.WilayahID == nil {
+		if adminUser.WilayahID == nil || *adminUser.WilayahID == 0 {
 			c.JSON(http.StatusForbidden, gin.H{
 				"status":  "error",
 				"message": "Admin Pemdes belum memiliki wilayah",

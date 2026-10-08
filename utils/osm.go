@@ -28,6 +28,10 @@ var osmHTTPClient = &http.Client{
 }
 
 func ReverseGeocodeOSM(lat, lng float64) (namaWilayah string, jenisJalan string, err error) {
+	if !IsValidCoordinate(lat, lng) {
+		return "", "", fmt.Errorf("koordinat tidak valid: lat=%f, lng=%f", lat, lng)
+	}
+
 	url := fmt.Sprintf("%s?lat=%f&lon=%f&format=json&extratags=1", osmBaseURL, lat, lng)
 
 	req, err := http.NewRequest("GET", url, nil)
@@ -77,8 +81,14 @@ func ReverseGeocodeOSM(lat, lng float64) (namaWilayah string, jenisJalan string,
 }
 
 func FindWilayahByNama(db *gorm.DB, nama string) (models.Wilayah, error) {
+	if db == nil {
+		return models.Wilayah{}, fmt.Errorf("database tidak tersedia")
+	}
 	var w models.Wilayah
 	namaBersih := strings.TrimSpace(nama)
-	err := db.Where("nama LIKE ?", "%"+namaBersih+"%").First(&w).Error
+	if namaBersih == "" {
+		return models.Wilayah{}, fmt.Errorf("nama wilayah kosong")
+	}
+	err := db.Where("nama LIKE ? AND deleted_at IS NULL", "%"+namaBersih+"%").First(&w).Error
 	return w, err
 }

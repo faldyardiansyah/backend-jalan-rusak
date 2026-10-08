@@ -15,7 +15,9 @@ func RequireRole(allowedRoles ...string) gin.HandlerFunc {
 
 		if !exists {
 			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "Akses tidak diizinkan: Autentikasi diperlukan",
+				"status":  "error",
+				"message": "Akses tidak diizinkan: Autentikasi diperlukan",
+				"error":   "Akses tidak diizinkan: Autentikasi diperlukan",
 			})
 			c.Abort()
 			return
@@ -26,7 +28,9 @@ func RequireRole(allowedRoles ...string) gin.HandlerFunc {
 
 		if !ok || roleStr == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "Akses tidak diizinkan: Role tidak valid atau kosong",
+				"status":  "error",
+				"message": "Akses tidak diizinkan: Role tidak valid atau kosong",
+				"error":   "Akses tidak diizinkan: Role tidak valid atau kosong",
 			})
 			c.Abort()
 			return
@@ -42,7 +46,9 @@ func RequireRole(allowedRoles ...string) gin.HandlerFunc {
 
 		// Role tidak memiliki akses
 		c.JSON(http.StatusForbidden, gin.H{
-			"error": "Akses tidak diizinkan: Anda tidak memiliki hak akses ini",
+			"status":  "error",
+			"message": "Akses tidak diizinkan: Anda tidak memiliki hak akses ini",
+			"error":   "Akses tidak diizinkan: Anda tidak memiliki hak akses ini",
 		})
 		c.Abort()
 	}

@@ -126,6 +126,13 @@ func TestHTTPIntegration_ProfileEndpoints(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Fatalf("PUT /api/profile/password expected 200, got %d: %s", w.Code, w.Body.String())
 		}
+
+		// Password change increments TokenVersion; refresh token for subsequent tests
+		config.DB.First(&testUser, testUser.ID)
+		newToken, errTok := utils.GenerateToken(testUser.ID, testUser.Email, testUser.Role, nil, testUser.TokenVersion)
+		if errTok == nil {
+			token = newToken
+		}
 	})
 
 	// 4. PUT /api/profile/avatar

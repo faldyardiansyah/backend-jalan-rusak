@@ -28,7 +28,18 @@ func Register(c *gin.Context) {
 	var input RegisterInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": err.Error(),
+			"status":  "error",
+			"message": err.Error(),
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"error":   "Koneksi database tidak tersedia",
+			"message": "Koneksi database tidak tersedia",
 		})
 		return
 	}
@@ -41,13 +52,17 @@ func Register(c *gin.Context) {
 		Where("email = ?", email).
 		Count(&count).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Terjadi kesalahan pada server",
+			"status":  "error",
+			"message": "Terjadi kesalahan pada server",
+			"error":   "Terjadi kesalahan pada server",
 		})
 		return
 	}
 	if count > 0 {
 		c.JSON(http.StatusConflict, gin.H{
-			"error": "Email sudah terdaftar",
+			"status":  "error",
+			"message": "Email sudah terdaftar",
+			"error":   "Email sudah terdaftar",
 		})
 		return
 	}
@@ -55,7 +70,9 @@ func Register(c *gin.Context) {
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Gagal mengenkripsi password",
+			"status":  "error",
+			"message": "Gagal mengenkripsi password",
+			"error":   "Gagal mengenkripsi password",
 		})
 		return
 	}
@@ -72,12 +89,15 @@ func Register(c *gin.Context) {
 
 	if err := config.DB.Create(&user).Error; err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Email sudah terdaftar atau terjadi kesalahan",
+			"status":  "error",
+			"message": "Email sudah terdaftar atau terjadi kesalahan",
+			"error":   "Email sudah terdaftar atau terjadi kesalahan",
 		})
 		return
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
+		"status":  "success",
 		"message": "Registrasi berhasil",
 		"data": gin.H{
 			"nama":  user.Name,
@@ -91,7 +111,18 @@ func Login(c *gin.Context) {
 	var input LoginInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": err.Error(),
+			"status":  "error",
+			"message": err.Error(),
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"error":   "Koneksi database tidak tersedia",
+			"message": "Koneksi database tidak tersedia",
 		})
 		return
 	}
@@ -101,14 +132,18 @@ func Login(c *gin.Context) {
 	var user models.User
 	if err := config.DB.Where("email = ?", email).First(&user).Error; err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "Email atau password salah",
+			"status":  "error",
+			"message": "Email atau password salah",
+			"error":   "Email atau password salah",
 		})
 		return
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(input.Password)); err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "Email atau password salah",
+			"status":  "error",
+			"message": "Email atau password salah",
+			"error":   "Email atau password salah",
 		})
 		return
 	}
@@ -125,12 +160,15 @@ func Login(c *gin.Context) {
 	token, err := utils.GenerateToken(user.ID, user.Email, user.Role, user.WilayahID, user.TokenVersion)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Gagal membuat token",
+			"status":  "error",
+			"message": "Gagal membuat token",
+			"error":   "Gagal membuat token",
 		})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
 		"message": "Login berhasil",
 		"token":   token,
 		"user": gin.H{
@@ -144,47 +182,88 @@ func Login(c *gin.Context) {
 	})
 }
 
-// buat update foto tapi opsional
+// buat update foto tapi opsional (endpoint legacy /api/profile/photo)
 func UpdateProfilePhoto(c *gin.Context) {
-	userIDVal, exists := c.Get("user_id")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "User tidak terautentikasi",
+	userID, ok := getUserIDFromContext(c)
+	if !ok {
+		return
+	}
+
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"error":   "Koneksi database tidak tersedia",
+			"message": "Koneksi database tidak tersedia",
 		})
 		return
 	}
-	userID := userIDVal.(uint)
 
 	fileHeader, err := c.FormFile("foto")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Foto wajib diunggah",
-		})
-		return
+		fileHeader, err = c.FormFile("avatar")
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  "error",
+				"error":   "Foto wajib diunggah (field: foto)",
+				"message": "Foto wajib diunggah (field: foto)",
+			})
+			return
+		}
 	}
 
-	imageURL, err := utils.UploadCloudinary(fileHeader)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Gagal upload foto",
+	// Validasi file terpusat via utils.ValidateImageFile (maksimal 2 MB, JPG/PNG/WEBP, byte sniffing)
+	if errVal := utils.ValidateImageFile(fileHeader, 2*1024*1024); errVal != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"error":   errVal.Error(),
+			"message": errVal.Error(),
 		})
 		return
 	}
 
 	var user models.User
-	if err := config.DB.First(&user, userID).Error; err != nil {
+	if err := config.DB.Where("deleted_at IS NULL").First(&user, userID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
-			"error": "User tidak ditemukan",
+			"status":  "error",
+			"error":   "User tidak ditemukan",
+			"message": "User tidak ditemukan",
+		})
+		return
+	}
+
+	oldPhoto := ""
+	if user.AvatarURL != nil && *user.AvatarURL != "" {
+		oldPhoto = *user.AvatarURL
+	} else if user.ProfilePhoto != "" {
+		oldPhoto = user.ProfilePhoto
+	}
+
+	imageURL, err := AvatarUploader(fileHeader)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"error":   "Gagal upload foto",
+			"message": "Gagal upload foto",
 		})
 		return
 	}
 
 	user.ProfilePhoto = imageURL
+	user.AvatarURL = &imageURL
 	if err := config.DB.Save(&user).Error; err != nil {
+		_ = AvatarDeleter(imageURL)
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Gagal menyimpan foto",
+			"status":  "error",
+			"error":   "Gagal menyimpan foto",
+			"message": "Gagal menyimpan foto",
 		})
 		return
+	}
+
+	if oldPhoto != "" && oldPhoto != imageURL {
+		go func(urlToDelete string) {
+			_ = AvatarDeleter(urlToDelete)
+		}(oldPhoto)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -197,6 +276,7 @@ func UpdateProfilePhoto(c *gin.Context) {
 			"role":         user.Role,
 			"wilayah_id":   user.WilayahID,
 			"profil_photo": user.ProfilePhoto,
+			"avatar_url":   user.AvatarURL,
 		},
 	})
 }

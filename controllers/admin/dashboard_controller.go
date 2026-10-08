@@ -53,6 +53,14 @@ func GetDashboardStats(c *gin.Context) {
 	var totalSelesai int64
 	var totalDitolak int64
 
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
+		})
+		return
+	}
+
 	baseQuery := config.DB.
 		Model(&models.LaporanKerusakan{}).
 		Where("laporan_kerusakan.deleted_at IS NULL")
@@ -69,7 +77,7 @@ func GetDashboardStats(c *gin.Context) {
 			return
 		}
 
-		if adminUser.WilayahID == nil {
+		if adminUser.WilayahID == nil || *adminUser.WilayahID == 0 {
 			c.JSON(http.StatusForbidden, gin.H{
 				"status":  "error",
 				"message": "Admin Pemdes belum memiliki wilayah",
