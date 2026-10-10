@@ -21,7 +21,6 @@ import (
 	"backend-jalan-rusak/utils"
 
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
@@ -65,23 +64,6 @@ func setupBE17Router() *gin.Engine {
 	return r
 }
 
-func makeBE17Token(userID uint, role string, exp time.Duration) string {
-	claims := utils.JWTClaim{
-		UserID: userID,
-		Email:  fmt.Sprintf("user_%d@roadis.local", userID),
-		Role:   models.UserRole(role),
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(exp)),
-		},
-	}
-	secretStr := os.Getenv("JWT_SECRET")
-	if secretStr == "" {
-		secretStr = "be17_integration_secret_key_1234567890"
-	}
-	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	str, _ := tok.SignedString([]byte(secretStr))
-	return str
-}
 
 // 1. TestBE17_01_AuthLifecycle
 func TestBE17_01_AuthLifecycle(t *testing.T) {
@@ -434,6 +416,58 @@ func TestBE17_04_PULifecycle(t *testing.T) {
 	r.ServeHTTP(wUpKab, reqUpKab)
 	if wUpKab.Code != http.StatusOK {
 		t.Fatalf("Expected 200 when Admin PU updates kabupaten report, got %d: %s", wUpKab.Code, wUpKab.Body.String())
+	}
+
+	// D. Default List: Admin PU sees reports across all authorities (contains both lapKab and lapDesa)
+	wList := httptest.NewRecorder()
+	reqList := httptest.NewRequest(http.MethodGet, "/api/admin/laporan?limit=100", nil)
+	reqList.Header.Set("Authorization", "Bearer "+token)
+	r.ServeHTTP(wList, reqList)
+	if wList.Code != http.StatusOK {
+		t.Fatalf("Expected 200 for Admin PU report list, got %d", wList.Code)
+	}
+	var respList struct {
+		Data []models.LaporanKerusakan `json:"data"`
+	}
+	_ = json.Unmarshal(wList.Body.Bytes(), &respList)
+	foundKab, foundDesa := false, false
+	for _, lap := range respList.Data {
+		if lap.ID == lapKab.ID {
+			foundKab = true
+		}
+		if lap.ID == lapDesa.ID {
+			foundDesa = true
+		}
+	}
+	if !foundKab || !foundDesa {
+		t.Errorf("Expected Admin PU default list to contain both Kabupaten and Desa reports, foundKab=%v, foundDesa=%v", foundKab, foundDesa)
+	}
+
+	// E. Filtered List: Admin PU filters by jenis_jalan=desa
+	wFilter := httptest.NewRecorder()
+	reqFilter := httptest.NewRequest(http.MethodGet, "/api/admin/laporan?jenis_jalan=desa&limit=100", nil)
+	reqFilter.Header.Set("Authorization", "Bearer "+token)
+	r.ServeHTTP(wFilter, reqFilter)
+	if wFilter.Code != http.StatusOK {
+		t.Fatalf("Expected 200 for Admin PU filtered report list, got %d", wFilter.Code)
+	}
+
+	// F. Dashboard Stats: Admin PU only counts kabupaten
+	wDash := httptest.NewRecorder()
+	reqDash := httptest.NewRequest(http.MethodGet, "/api/admin/dashboard", nil)
+	reqDash.Header.Set("Authorization", "Bearer "+token)
+	r.ServeHTTP(wDash, reqDash)
+	if wDash.Code != http.StatusOK {
+		t.Fatalf("Expected 200 for Admin PU dashboard, got %d", wDash.Code)
+	}
+
+	// G. Map Reports: Admin PU monitors all authorities
+	wMap := httptest.NewRecorder()
+	reqMap := httptest.NewRequest(http.MethodGet, "/api/admin/map/laporan", nil)
+	reqMap.Header.Set("Authorization", "Bearer "+token)
+	r.ServeHTTP(wMap, reqMap)
+	if wMap.Code != http.StatusOK {
+		t.Fatalf("Expected 200 for Admin PU map, got %d", wMap.Code)
 	}
 }
 

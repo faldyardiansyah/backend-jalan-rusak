@@ -33,27 +33,6 @@ func setupBE11Router() *gin.Engine {
 	return r
 }
 
-func createMultipartProfileFile(fieldName, filename string, content []byte) (*http.Request, error) {
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
-	part, err := writer.CreateFormFile(fieldName, filename)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := part.Write(content); err != nil {
-		return nil, err
-	}
-	if err := writer.Close(); err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPut, "/api/profile/avatar", body)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	return req, nil
-}
 
 func createMultipartLegacyPhotoRequest(fieldName, filename string, content []byte) (*http.Request, error) {
 	body := &bytes.Buffer{}

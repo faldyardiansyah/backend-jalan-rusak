@@ -1,2 +1,28 @@
+# Environment files
 .env
+.env.local
+.env.*.local
+
+# IDE & Editor configs
 .vscode/
+.idea/
+
+# Go build & test binary artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+test_main.exe
+
+# Output profiles and coverage
+*.test
+*.out
+*.prof
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
