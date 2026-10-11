@@ -185,3 +185,178 @@ func TestDatabaseStartup_GuardCondition(t *testing.T) {
 		})
 	}
 }
+
+// 7. Test SeedWilayah Idempotency & Isolated Execution
+func TestSeedWilayah_IdempotentIsolatedExecution(t *testing.T) {
+	hasDB := ensureTestDB(t)
+	if !hasDB {
+		t.Skip("MySQL not available for isolated seeder test")
+	}
+
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("SEED_DEV_DATA", "true")
+
+	tx := testDB.Begin()
+	defer tx.Rollback()
+
+	// Eksekusi pertama
+	SeedWilayah(tx)
+
+	var wIndra1, wLobener1 models.Wilayah
+	if err := tx.Where("nama = ? AND deleted_at IS NULL", "Indramayu").First(&wIndra1).Error; err != nil {
+		t.Fatalf("expected Indramayu to exist in tx: %v", err)
+	}
+	if wIndra1.Tipe != "desa" {
+		t.Errorf("expected Indramayu tipe='desa', got '%s'", wIndra1.Tipe)
+	}
+
+	if err := tx.Where("nama = ? AND deleted_at IS NULL", "Lobener Lor").First(&wLobener1).Error; err != nil {
+		t.Fatalf("expected Lobener Lor to exist in tx: %v", err)
+	}
+	if wLobener1.Tipe != "desa" {
+		t.Errorf("expected Lobener Lor tipe='desa', got '%s'", wLobener1.Tipe)
+	}
+
+	var countBefore int64
+	tx.Model(&models.Wilayah{}).Where("deleted_at IS NULL").Count(&countBefore)
+
+	// Eksekusi kedua (idempotency check)
+	SeedWilayah(tx)
+
+	var countAfter int64
+	tx.Model(&models.Wilayah{}).Where("deleted_at IS NULL").Count(&countAfter)
+
+	if countAfter != countBefore {
+		t.Errorf("expected count to remain unchanged after second run, before=%d, after=%d", countBefore, countAfter)
+	}
+
+	// Cek tidak ada duplikat Indramayu
+	var countIndra int64
+	tx.Model(&models.Wilayah{}).Where("nama = ? AND deleted_at IS NULL", "Indramayu").Count(&countIndra)
+	if countIndra != 1 {
+		t.Errorf("expected exactly 1 active Indramayu, got %d", countIndra)
+	}
+
+	// Cek tidak ada duplikat Lobener Lor
+	var countLobener int64
+	tx.Model(&models.Wilayah{}).Where("nama = ? AND deleted_at IS NULL", "Lobener Lor").Count(&countLobener)
+	if countLobener != 1 {
+		t.Errorf("expected exactly 1 active Lobener Lor, got %d", countLobener)
+	}
+}
+
+// 8. Test SeedWilayah Partial Presence & Independent Sync
+func TestSeedWilayah_PartialPresenceSync(t *testing.T) {
+	hasDB := ensureTestDB(t)
+	if !hasDB {
+		t.Skip("MySQL not available for isolated seeder test")
+	}
+
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("SEED_DEV_DATA", "true")
+
+	tx := testDB.Begin()
+	defer tx.Rollback()
+
+	// Simulasikan sebagian data: hapus Lobener Lor dalam transaksi dan kosongkan tipe Indramayu
+	tx.Where("nama = ?", "Lobener Lor").Delete(&models.Wilayah{})
+	tx.Model(&models.Wilayah{}).Where("nama = ?", "Indramayu").Update("tipe", "")
+
+	// Jalankan SeedWilayah
+	SeedWilayah(tx)
+
+	// Verifikasi: Seeder tidak berhenti, Lobener Lor berhasil dibuat kembali
+	var wLobener models.Wilayah
+	if err := tx.Where("nama = ? AND deleted_at IS NULL", "Lobener Lor").First(&wLobener).Error; err != nil {
+		t.Errorf("expected Lobener Lor to be created when partially missing: %v", err)
+	}
+	if wLobener.Tipe != "desa" {
+		t.Errorf("expected Lobener Lor tipe='desa', got '%s'", wLobener.Tipe)
+	}
+
+	// Verifikasi: Indramayu yang bertipe kosong berhasil disinkronkan menjadi 'desa'
+	var wIndra models.Wilayah
+	if err := tx.Where("nama = ? AND deleted_at IS NULL", "Indramayu").First(&wIndra).Error; err != nil {
+		t.Errorf("expected Indramayu to exist: %v", err)
+	}
+	if wIndra.Tipe != "desa" {
+		t.Errorf("expected Indramayu tipe to be synced to 'desa', got '%s'", wIndra.Tipe)
+	}
+}
+
+// 9. Test SeedWilayah Never Generates BE6 or BE16 Fixtures
+func TestSeedWilayah_NoBEFixturesGenerated(t *testing.T) {
+	hasDB := ensureTestDB(t)
+	if !hasDB {
+		t.Skip("MySQL not available for isolated seeder test")
+	}
+
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("SEED_DEV_DATA", "true")
+
+	tx := testDB.Begin()
+	defer tx.Rollback()
+
+	var beCountBefore int64
+	tx.Model(&models.Wilayah{}).Where("nama LIKE ? OR nama LIKE ?", "%BE16%", "%Desa A BE6%").Count(&beCountBefore)
+
+	SeedWilayah(tx)
+
+	var beCountAfter int64
+	tx.Model(&models.Wilayah{}).Where("nama LIKE ? OR nama LIKE ?", "%BE16%", "%Desa A BE6%").Count(&beCountAfter)
+
+	if beCountAfter != beCountBefore {
+		t.Errorf("expected seeder to never create BE test fixtures, before=%d, after=%d", beCountBefore, beCountAfter)
+	}
+}
+
+// 10. Test SeedWilayah Preserves Existing Foreign Keys
+func TestSeedWilayah_PreservesUserAndLaporanRelations(t *testing.T) {
+	hasDB := ensureTestDB(t)
+	if !hasDB {
+		t.Skip("MySQL not available for isolated seeder test")
+	}
+
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("SEED_DEV_DATA", "true")
+
+	tx := testDB.Begin()
+	defer tx.Rollback()
+
+	// Catat ID awal Indramayu dan Lobener Lor
+	var idIndraBefore, idLobenerBefore uint
+	var wI, wL models.Wilayah
+	if err := tx.Where("nama = ? AND deleted_at IS NULL", "Indramayu").First(&wI).Error; err == nil {
+		idIndraBefore = wI.ID
+	}
+	if err := tx.Where("nama = ? AND deleted_at IS NULL", "Lobener Lor").First(&wL).Error; err == nil {
+		idLobenerBefore = wL.ID
+	}
+
+	SeedWilayah(tx)
+
+	var wIAfter, wLAfter models.Wilayah
+	if err := tx.Where("nama = ? AND deleted_at IS NULL", "Indramayu").First(&wIAfter).Error; err == nil {
+		if idIndraBefore > 0 && wIAfter.ID != idIndraBefore {
+			t.Errorf("ID Indramayu must not change: before=%d, after=%d", idIndraBefore, wIAfter.ID)
+		}
+	}
+	if err := tx.Where("nama = ? AND deleted_at IS NULL", "Lobener Lor").First(&wLAfter).Error; err == nil {
+		if idLobenerBefore > 0 && wLAfter.ID != idLobenerBefore {
+			t.Errorf("ID Lobener Lor must not change: before=%d, after=%d", idLobenerBefore, wLAfter.ID)
+		}
+	}
+
+	// Pastikan user dan laporan tetap memiliki relasi yang valid
+	var orphanedUsers int64
+	tx.Model(&models.User{}).Where("wilayah_id IS NOT NULL AND wilayah_id NOT IN (SELECT id FROM wilayah WHERE deleted_at IS NULL)").Count(&orphanedUsers)
+	if orphanedUsers > 0 {
+		t.Errorf("expected 0 orphaned users, got %d", orphanedUsers)
+	}
+
+	var orphanedReports int64
+	tx.Model(&models.LaporanKerusakan{}).Where("deleted_at IS NULL AND wilayah_id NOT IN (SELECT id FROM wilayah WHERE deleted_at IS NULL)").Count(&orphanedReports)
+	if orphanedReports > 0 {
+		t.Errorf("expected 0 orphaned reports, got %d", orphanedReports)
+	}
+}

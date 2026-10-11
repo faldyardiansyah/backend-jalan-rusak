@@ -3,12 +3,14 @@ package warga
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"math"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
 
 	"backend-jalan-rusak/config"
 	"backend-jalan-rusak/models"
@@ -372,6 +374,30 @@ func TestCreateLaporan_FileValidation(t *testing.T) {
 			t.Skip("No test user in DB")
 		}
 
+		uniqueJudul := fmt.Sprintf("Test File Validation %d", time.Now().UnixNano())
+		testFields := map[string]string{
+			"latitude":       baseFields["latitude"],
+			"longitude":      baseFields["longitude"],
+			"judul":          uniqueJudul,
+			"deskripsi":      baseFields["deskripsi"],
+			"tipe_kerusakan": baseFields["tipe_kerusakan"],
+			"wilayah_id":     baseFields["wilayah_id"],
+		}
+
+		var createdID uint
+		defer func() {
+			if createdID > 0 {
+				config.DB.Unscoped().Where("laporan_id = ?", createdID).Delete(&models.Notifikasi{})
+				config.DB.Unscoped().Delete(&models.LaporanKerusakan{}, createdID)
+			} else {
+				var fallback models.LaporanKerusakan
+				if err := config.DB.Unscoped().Where("judul = ?", uniqueJudul).First(&fallback).Error; err == nil {
+					config.DB.Unscoped().Where("laporan_id = ?", fallback.ID).Delete(&models.Notifikasi{})
+					config.DB.Unscoped().Delete(&fallback)
+				}
+			}
+		}()
+
 		uploaderCalled := false
 		origUploader := LaporanUploader
 		LaporanUploader = func(fh *multipart.FileHeader) (string, error) {
@@ -386,12 +412,25 @@ func TestCreateLaporan_FileValidation(t *testing.T) {
 			CreateLaporan(c)
 		})
 
-		req, _ := createMultipartRequest("foto", "valid.jpg", validJPG, baseFields)
+		req, _ := createMultipartRequest("foto", "valid.jpg", validJPG, testFields)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200 OK for valid JPG, got %d: %s", w.Code, w.Body.String())
+		}
 		if !uploaderCalled {
 			t.Errorf("expected LaporanUploader TO be called for valid JPG")
+		}
+
+		var resp struct {
+			Status string `json:"status"`
+			Data   struct {
+				ID uint `json:"id"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err == nil && resp.Data.ID > 0 {
+			createdID = resp.Data.ID
 		}
 	})
 }

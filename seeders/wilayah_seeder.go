@@ -16,27 +16,42 @@ func SeedWilayah(db *gorm.DB) {
 		return
 	}
 
-	var count int64
-
-	db.Model(&models.Wilayah{}).Count(&count)
-
-	if count > 0 {
-		log.Println("Seeder: Data wilayah sudah ada")
+	if db == nil {
 		return
 	}
 
-	wilayah := []models.Wilayah{
+	defaultWilayah := []models.Wilayah{
 		{
 			Nama: "Indramayu",
+			Tipe: "desa",
 		},
 		{
 			Nama: "Lobener Lor",
+			Tipe: "desa",
 		},
 	}
 
-	if err := db.Create(&wilayah).Error; err != nil {
-		log.Fatal("Seeder: Gagal memasukkan data wilayah: ", err)
+	for _, w := range defaultWilayah {
+		var existing models.Wilayah
+		err := db.Where("nama = ? AND deleted_at IS NULL", w.Nama).First(&existing).Error
+		if err != nil {
+			// Record belum ada -> Buat baru secara mandiri
+			if errCreate := db.Create(&models.Wilayah{Nama: w.Nama, Tipe: w.Tipe}).Error; errCreate != nil {
+				log.Printf("Seeder Wilayah: Gagal membuat wilayah %s: %v\n", w.Nama, errCreate)
+			} else {
+				log.Printf("Seeder Wilayah: Berhasil menambahkan wilayah %s (Tipe: %s)\n", w.Nama, w.Tipe)
+			}
+		} else {
+			// Record sudah ada -> Sinkronkan tipe jika masih kosong atau tidak teridentifikasi
+			if existing.Tipe == "" || existing.Tipe == "tidak_teridentifikasi" {
+				if errUpdate := db.Model(&existing).Update("tipe", w.Tipe).Error; errUpdate != nil {
+					log.Printf("Seeder Wilayah: Gagal memperbarui tipe wilayah %s: %v\n", existing.Nama, errUpdate)
+				} else {
+					log.Printf("Seeder Wilayah: Berhasil menyinkronkan tipe wilayah %s menjadi %s\n", existing.Nama, w.Tipe)
+				}
+			}
+		}
 	}
 
-	log.Println("Seeder: Berhasil memasukkan data wilayah")
+	log.Println("Seeder: Berhasil memastikan data master wilayah (idempotent)")
 }
