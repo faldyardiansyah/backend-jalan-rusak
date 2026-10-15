@@ -146,6 +146,7 @@ func setupNotifSecurityFixtures(t *testing.T) (*notifSecurityFixtures, func()) {
 		config.DB.Unscoped().Delete(&f.lapKabupaten)
 		config.DB.Unscoped().Where("user_id IN ?", []uint{f.wargaA.ID, f.wargaB.ID, f.pemdesA.ID, f.pemdesB.ID, f.adminPU.ID, f.superAdmin.ID, f.deletedUser.ID}).Delete(&models.UserPreference{})
 		config.DB.Unscoped().Where("user_id IN ?", []uint{f.wargaA.ID, f.wargaB.ID, f.pemdesA.ID, f.pemdesB.ID, f.adminPU.ID, f.superAdmin.ID, f.deletedUser.ID}).Delete(&models.Notifikasi{})
+		config.DB.Unscoped().Where("laporan_id IN ?", []uint{f.lapDesaA.ID, f.lapKabupaten.ID}).Delete(&models.Notifikasi{})
 		config.DB.Unscoped().Delete(&f.wargaA)
 		config.DB.Unscoped().Delete(&f.wargaB)
 		config.DB.Unscoped().Delete(&f.pemdesA)
@@ -305,8 +306,8 @@ func TestBE10_Notifikasi_Integration(t *testing.T) {
 
 	// H. Notification Creation via Report Status Update
 	t.Run("Report status update creates notification for owner citizen", func(t *testing.T) {
-		// Clean existing notifs
-		config.DB.Where("1 = 1").Delete(&models.Notifikasi{})
+		// Clean existing notifs only for this specific test fixture report
+		config.DB.Unscoped().Where("laporan_id = ?", f.lapDesaA.ID).Delete(&models.Notifikasi{})
 
 		body := bytes.NewBufferString(`{"status":"proses","catatan_admin":"Sedang diperbaiki tim"}`)
 		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/admin/laporan/%d/status", f.lapDesaA.ID), body)
@@ -321,6 +322,7 @@ func TestBE10_Notifikasi_Integration(t *testing.T) {
 
 		var notifs []models.Notifikasi
 		config.DB.Where("laporan_id = ?", f.lapDesaA.ID).Find(&notifs)
+		defer config.DB.Unscoped().Where("laporan_id = ?", f.lapDesaA.ID).Delete(&models.Notifikasi{})
 
 		if len(notifs) == 0 {
 			t.Errorf("expected notification created upon status change")

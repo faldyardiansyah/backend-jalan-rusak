@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 	"time"
 
@@ -14,9 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
-	"gorm.io/gorm/schema"
 )
 
 func init() {
@@ -235,27 +232,9 @@ func TestRequireRole_Unauthenticated(t *testing.T) {
 }
 
 func ensureDBForMiddlewareTest(t *testing.T) bool {
-	if config.DB != nil {
-		_ = config.DB.AutoMigrate(&models.User{})
-		return true
-	}
-
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local",
-		os.Getenv("DB_USER"), os.Getenv("DB_PASS"),
-		os.Getenv("DB_HOST"), os.Getenv("DB_PORT"),
-		os.Getenv("DB_NAME"),
-	)
-	if os.Getenv("DB_HOST") == "" {
-		dsn = "root:@tcp(127.0.0.1:3306)/db_jalan_rusak?charset=utf8mb4&parseTime=True&loc=Local"
-	}
-
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
-		NamingStrategy: schema.NamingStrategy{
-			SingularTable: true,
-		},
-	})
+	db, err := config.EnsureTestDB()
 	if err != nil {
-		t.Logf("MySQL connection unavailable for middleware test: %v", err)
+		t.Logf("Isolated test DB unavailable (%v), skipping middleware test", err)
 		return false
 	}
 
@@ -267,7 +246,6 @@ func ensureDBForMiddlewareTest(t *testing.T) bool {
 		&models.Notifikasi{},
 		&models.UserPreference{},
 	)
-	config.DB = db
 	return true
 }
 

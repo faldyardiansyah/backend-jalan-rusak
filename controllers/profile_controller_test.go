@@ -19,9 +19,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
-	"gorm.io/driver/mysql"
-	"gorm.io/gorm"
-	"gorm.io/gorm/schema"
 )
 
 func setupProfileRoutes(r *gin.Engine) {
@@ -42,19 +39,9 @@ func setupProfileRoutes(r *gin.Engine) {
 
 // Helper untuk inisialisasi database jika MySQL lokal tersedia
 func ensureTestDB(t *testing.T) bool {
-	if config.DB != nil {
-		_ = config.DB.AutoMigrate(&models.UserPreference{})
-		return true
-	}
-
-	dsn := "root:@tcp(127.0.0.1:3306)/db_jalan_rusak?charset=utf8mb4&parseTime=True&loc=Local"
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
-		NamingStrategy: schema.NamingStrategy{
-			SingularTable: true,
-		},
-	})
+	db, err := config.EnsureTestDB()
 	if err != nil {
-		t.Logf("MySQL connection unavailable in test environment (%v), falling back to mock tests", err)
+		t.Logf("Isolated test DB unavailable (%v), falling back to mock tests", err)
 		return false
 	}
 
@@ -70,7 +57,6 @@ func ensureTestDB(t *testing.T) bool {
 		t.Logf("AutoMigrate error in test: %v", err)
 	}
 
-	config.DB = db
 	return true
 }
 

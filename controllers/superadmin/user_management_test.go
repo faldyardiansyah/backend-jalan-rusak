@@ -17,28 +17,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
-	"gorm.io/driver/mysql"
-	"gorm.io/gorm"
-	"gorm.io/gorm/schema"
 )
 
 func ensureTestDB(t *testing.T) bool {
-	if config.DB != nil {
-		return true
-	}
-
-	dsn := "root:@tcp(127.0.0.1:3306)/db_jalan_rusak?charset=utf8mb4&parseTime=True&loc=Local"
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
-		NamingStrategy: schema.NamingStrategy{
-			SingularTable: true,
-		},
-	})
+	_, err := config.EnsureTestDB()
 	if err != nil {
-		t.Logf("MySQL connection unavailable in test (%v)", err)
+		t.Logf("Isolated test DB unavailable (%v), skipping test", err)
 		return false
 	}
-
-	config.DB = db
 	return true
 }
 

@@ -21,26 +21,15 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
-	"gorm.io/gorm/schema"
 )
 
 func ensureTestDB(t *testing.T) bool {
-	if config.DB != nil {
-		return true
-	}
-	dsn := "root:@tcp(127.0.0.1:3306)/db_jalan_rusak?charset=utf8mb4&parseTime=True&loc=Local"
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
-		NamingStrategy: schema.NamingStrategy{
-			SingularTable: true,
-		},
-	})
+	_, err := config.EnsureTestDB()
 	if err != nil {
-		t.Logf("MySQL connection unavailable in test environment (%v)", err)
+		t.Logf("Isolated test DB unavailable (%v), skipping test", err)
 		return false
 	}
-	config.DB = db
 	return true
 }
 
@@ -497,6 +486,19 @@ func TestBE16_11_CreateResourceResponseConsistency(t *testing.T) {
 	if wilResp["status"] != "success" {
 		t.Errorf("expected status 'success', got %v", wilResp["status"])
 	}
+	var createdID uint
+	if dataMap, ok := wilResp["data"].(map[string]interface{}); ok {
+		if idVal, ok := dataMap["id"].(float64); ok && idVal > 0 {
+			createdID = uint(idVal)
+		} else if idVal, ok := dataMap["ID"].(float64); ok && idVal > 0 {
+			createdID = uint(idVal)
+		}
+	}
+	if createdID > 0 {
+		defer config.DB.Unscoped().Delete(&models.Wilayah{}, createdID)
+	} else {
+		defer config.DB.Unscoped().Where("nama = ?", wilayahPayload["nama"]).Delete(&models.Wilayah{})
+	}
 }
 
 // 12. Update resource response consistency: 200 OK with success envelope
@@ -551,6 +553,7 @@ func TestBE16_13_DeleteResourceResponseConsistency(t *testing.T) {
 		Tipe: "desa",
 	}
 	config.DB.Create(&wilayah)
+	defer config.DB.Unscoped().Delete(&wilayah)
 
 	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/superadmin/wilayah/%d", wilayah.ID), nil)
 	req.Header.Set("Authorization", "Bearer "+superToken)

@@ -14,20 +14,53 @@ import (
 var testDB *gorm.DB
 
 func ensureTestDB(t *testing.T) bool {
-	if testDB != nil {
-		return true
+	testDBName := os.Getenv("TEST_DB_NAME")
+	if testDBName == "" {
+		testDBName = "db_jalan_rusak_test"
+	}
+	devDB := os.Getenv("DB_NAME")
+	if devDB == "" {
+		devDB = "db_jalan_rusak"
 	}
 
-	dsn := "root:@tcp(127.0.0.1:3306)/db_jalan_rusak?charset=utf8mb4&parseTime=True&loc=Local"
+	if testDBName == "db_jalan_rusak" || testDBName == devDB {
+		t.Logf("FAIL-SAFE: Test database '%s' matches development database '%s'. Skipping seeder test", testDBName, devDB)
+		return false
+	}
+
+	if testDB != nil {
+		current := testDB.Migrator().CurrentDatabase()
+		if current == testDBName {
+			return true
+		}
+		testDB = nil
+	}
+
+	dsn := "root:@tcp(127.0.0.1:3306)/" + testDBName + "?charset=utf8mb4&parseTime=True&loc=Local"
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
 		NamingStrategy: schema.NamingStrategy{
 			SingularTable: true,
 		},
 	})
 	if err != nil {
-		t.Logf("MySQL connection unavailable in test (%v)", err)
+		t.Logf("MySQL test connection unavailable (%v)", err)
 		return false
 	}
+
+	current := db.Migrator().CurrentDatabase()
+	if current != testDBName {
+		t.Logf("FAIL-SAFE: Connected database '%s' does not match test target '%s'", current, testDBName)
+		return false
+	}
+
+	_ = db.AutoMigrate(
+		&models.User{},
+		&models.LaporanKerusakan{},
+		&models.RiwayatChat{},
+		&models.Wilayah{},
+		&models.Notifikasi{},
+		&models.UserPreference{},
+	)
 
 	testDB = db
 	return true

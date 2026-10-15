@@ -20,9 +20,7 @@ import (
 	wargaController "backend-jalan-rusak/controllers/warga"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
-	"gorm.io/gorm/schema"
 )
 
 func init() {
@@ -31,22 +29,11 @@ func init() {
 }
 
 func ensureDBForLaporanTest(t *testing.T) bool {
-	if config.DB != nil {
-		return true
-	}
-
-	dsn := "root:@tcp(127.0.0.1:3306)/db_jalan_rusak?charset=utf8mb4&parseTime=True&loc=Local"
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
-		NamingStrategy: schema.NamingStrategy{
-			SingularTable: true,
-		},
-	})
+	_, err := config.EnsureTestDB()
 	if err != nil {
-		t.Logf("MySQL connection unavailable for laporan test (%v)", err)
+		t.Logf("Isolated test DB unavailable (%v), skipping database-dependent tests", err)
 		return false
 	}
-
-	config.DB = db
 	return true
 }
 

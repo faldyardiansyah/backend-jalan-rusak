@@ -21,9 +21,6 @@ import (
 	"backend-jalan-rusak/utils"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/driver/mysql"
-	"gorm.io/gorm"
-	"gorm.io/gorm/schema"
 )
 
 func init() {
@@ -32,17 +29,9 @@ func init() {
 }
 
 func ensureBE17DB(t *testing.T) bool {
-	if config.DB != nil {
-		return true
-	}
-	dsn := "root:@tcp(127.0.0.1:3306)/db_jalan_rusak?charset=utf8mb4&parseTime=True&loc=Local"
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
-		NamingStrategy: schema.NamingStrategy{
-			SingularTable: true,
-		},
-	})
+	db, err := config.EnsureTestDB()
 	if err != nil {
-		t.Logf("MySQL connection unavailable in integration test environment (%v)", err)
+		t.Logf("Isolated test DB unavailable (%v), skipping integration tests", err)
 		return false
 	}
 	_ = db.AutoMigrate(
@@ -53,7 +42,6 @@ func ensureBE17DB(t *testing.T) bool {
 		&models.Notifikasi{},
 		&models.UserPreference{},
 	)
-	config.DB = db
 	return true
 }
 

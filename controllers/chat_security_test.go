@@ -179,6 +179,7 @@ func setupChatSecurityFixtures(t *testing.T) (*chatSecurityFixtures, func()) {
 		config.DB.Unscoped().Delete(&f.lapDeleted)
 		config.DB.Unscoped().Where("user_id IN ?", []uint{f.wargaA.ID, f.wargaB.ID, f.pemdesA.ID, f.pemdesB.ID, f.adminPU.ID, f.superAdmin.ID, f.deletedUser.ID}).Delete(&models.UserPreference{})
 		config.DB.Unscoped().Where("user_id IN ?", []uint{f.wargaA.ID, f.wargaB.ID, f.pemdesA.ID, f.pemdesB.ID, f.adminPU.ID, f.superAdmin.ID, f.deletedUser.ID}).Delete(&models.Notifikasi{})
+		config.DB.Unscoped().Where("laporan_id IN ?", []uint{f.lapDesaA.ID, f.lapDesaB.ID, f.lapKabupaten.ID, f.lapProvinsi.ID, f.lapNasional.ID, f.lapDeleted.ID}).Delete(&models.Notifikasi{})
 		config.DB.Unscoped().Delete(&f.wargaA)
 		config.DB.Unscoped().Delete(&f.wargaB)
 		config.DB.Unscoped().Delete(&f.pemdesA)
@@ -908,8 +909,8 @@ func TestBE9_ChatSecurity_NotificationIsolation(t *testing.T) {
 	r := gin.New()
 	routes.SetupRoutes(r)
 
-	// Clean existing notifications
-	config.DB.Where("1 = 1").Delete(&models.Notifikasi{})
+	// Clean existing notifications only for this specific test report fixture
+	config.DB.Unscoped().Where("laporan_id = ?", f.lapDesaA.ID).Delete(&models.Notifikasi{})
 
 	// 1. Warga sends message on Desa A report
 	t.Run("Warga message on Desa report creates notification only for Pemdes Desa A", func(t *testing.T) {
@@ -926,6 +927,7 @@ func TestBE9_ChatSecurity_NotificationIsolation(t *testing.T) {
 
 		var notifs []models.Notifikasi
 		config.DB.Where("laporan_id = ?", f.lapDesaA.ID).Find(&notifs)
+		defer config.DB.Unscoped().Where("laporan_id = ?", f.lapDesaA.ID).Delete(&models.Notifikasi{})
 
 		if len(notifs) == 0 {
 			t.Errorf("expected at least 1 notification generated for Pemdes Desa A")
@@ -949,7 +951,8 @@ func TestBE9_ChatSecurity_NotificationIsolation(t *testing.T) {
 
 	// 2. Admin Pemdes replies to Desa A chat
 	t.Run("Admin Pemdes reply creates notification only for Warga A (report owner)", func(t *testing.T) {
-		config.DB.Where("1 = 1").Delete(&models.Notifikasi{})
+		// Clean existing notifications only for this specific test report fixture
+		config.DB.Unscoped().Where("laporan_id = ?", f.lapDesaA.ID).Delete(&models.Notifikasi{})
 
 		body := bytes.NewBufferString(`{"balasan":"Sudah dikoordinasikan dengan PLN dan RT"}`)
 		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/admin/chat/%d", f.chatDesaA.ID), body)
@@ -964,6 +967,7 @@ func TestBE9_ChatSecurity_NotificationIsolation(t *testing.T) {
 
 		var notifs []models.Notifikasi
 		config.DB.Where("laporan_id = ?", f.lapDesaA.ID).Find(&notifs)
+		defer config.DB.Unscoped().Where("laporan_id = ?", f.lapDesaA.ID).Delete(&models.Notifikasi{})
 
 		if len(notifs) == 0 {
 			t.Errorf("expected notification generated for report owner Warga A")

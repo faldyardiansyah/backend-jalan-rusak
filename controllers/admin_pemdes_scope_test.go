@@ -132,6 +132,7 @@ func setupBE6Fixtures(t *testing.T) (*be6Fixtures, func()) {
 		config.DB.Unscoped().Delete(&f.lapProvinsi)
 		config.DB.Unscoped().Delete(&f.lapNasional)
 		config.DB.Unscoped().Delete(&f.lapDeletedA)
+		config.DB.Unscoped().Where("laporan_id IN ?", []uint{f.lapDesaA.ID, f.lapDesaB.ID, f.lapKabupaten.ID, f.lapProvinsi.ID, f.lapNasional.ID, f.lapDeletedA.ID}).Delete(&models.Notifikasi{})
 		config.DB.Unscoped().Where("user_id IN ?", []uint{f.wargaA.ID, f.wargaB.ID, f.pemdesA.ID, f.pemdesB.ID, f.adminPU.ID, f.superAdmin.ID}).Delete(&models.UserPreference{})
 		config.DB.Unscoped().Delete(&f.wargaA)
 		config.DB.Unscoped().Delete(&f.wargaB)
