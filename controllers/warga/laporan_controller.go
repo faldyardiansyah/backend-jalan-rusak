@@ -214,15 +214,17 @@ func CreateLaporan(c *gin.Context) {
 	}
 
 	// Menentukan jenis jalan
-	jenisJalan := strings.ToLower(strings.TrimSpace(c.PostForm("jenis_jalan")))
-	if jenisJalan == "" {
-		jenisJalan = strings.ToLower(strings.TrimSpace(jenisJalanOSM))
-	}
-	if jenisJalan == "" {
-		jenisJalan = "desa"
-	}
-	if jenisJalan != "desa" && jenisJalan != "kabupaten" && jenisJalan != "provinsi" && jenisJalan != "nasional" {
-		jenisJalan = "desa"
+	jenisJalan := strings.ToLower(strings.TrimSpace(jenisJalanOSM))
+
+	if jenisJalan != "desa" &&
+		jenisJalan != "kabupaten" &&
+		jenisJalan != "provinsi" &&
+		jenisJalan != "nasional" {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"status":  "error",
+			"message": "Jenis jalan belum berhasil ditentukan dari OSM. Silakan coba kembali.",
+		})
+		return
 	}
 
 	// Upload foto setelah semua validasi input dan wilayah berhasil
