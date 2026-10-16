@@ -356,35 +356,79 @@ func KirimNotifikasiLaporanBaru(laporan models.LaporanKerusakan) {
 		return
 	}
 
+	jenisJalan := strings.ToLower(strings.TrimSpace(laporan.JenisJalan))
+
 	var adminTujuan []models.User
 
-	switch strings.ToLower(laporan.JenisJalan) {
-	case "desa":
-		if laporan.WilayahID == 0 {
-			return
-		}
-		config.DB.
-			Where("role = ? AND wilayah_id = ?", models.RoleAdminPemdes, laporan.WilayahID).
-			Find(&adminTujuan)
-	case "kabupaten":
-		config.DB.
-			Where("role = ?", models.RoleAdminPu).
-			Find(&adminTujuan)
+	// Superadmin menerima notifikasi semua jenis jalan.
+	if err := config.DB.
+		Where("role = ?", models.RoleSuperAdmin).
+		Find(&adminTujuan).Error; err != nil {
+		return
 	}
+
+	var adminTeknis []models.User
+
+	switch jenisJalan {
+	case "nasional", "provinsi", "kabupaten":
+		// Tidak ada admin provinsi.
+		// Semua laporan jalan selain desa diteruskan ke admin PU.
+		if err := config.DB.
+			Where("role = ?", models.RoleAdminPu).
+			Find(&adminTeknis).Error; err != nil {
+			config.DB.Logger.Error(
+				config.DB.Statement.Context,
+				"Gagal mengambil admin PU: %v",
+				err,
+			)
+		}
+
+	case "desa":
+		if laporan.WilayahID > 0 {
+			if err := config.DB.
+				Where(
+					"role = ? AND wilayah_id = ?",
+					models.RoleAdminPemdes,
+					laporan.WilayahID,
+				).
+				Find(&adminTeknis).Error; err != nil {
+				config.DB.Logger.Error(
+					config.DB.Statement.Context,
+					"Gagal mengambil admin pemdes: %v",
+					err,
+				)
+			}
+		}
+	}
+
+	// Gabungkan penerima dan hindari notifikasi ganda.
+	semuaAdmin := append(adminTujuan, adminTeknis...)
+	seen := make(map[uint]bool)
 
 	pengirim := "Warga"
-	if strings.TrimSpace(laporan.User.Name) != "" {
-		pengirim = strings.TrimSpace(laporan.User.Name)
+	if nama := strings.TrimSpace(laporan.User.Name); nama != "" {
+		pengirim = nama
 	}
 
-	for _, admin := range adminTujuan {
-		if admin.ID > 0 {
-			config.DB.Create(&models.Notifikasi{
-				UserID:    admin.ID,
-				LaporanID: laporan.ID,
-				Judul:     "Laporan Baru Masuk",
-				Pesan:     "Laporan baru telah dikirimkan oleh " + pengirim,
-			})
+	for _, admin := range semuaAdmin {
+		if admin.ID == 0 || seen[admin.ID] {
+			continue
+		}
+		seen[admin.ID] = true
+
+		err := config.DB.Create(&models.Notifikasi{
+			UserID:    admin.ID,
+			LaporanID: laporan.ID,
+			Judul:     "Laporan Baru Masuk",
+			Pesan:     "Laporan baru telah dikirimkan oleh " + pengirim,
+		}).Error
+
+		if err != nil {
+			config.DB.Logger.Error(
+				config.DB.Statement.Context,
+				"Gagal membuat notifikasi laporan: %v",
+				err,
+			)
 		}
 	}
 }
