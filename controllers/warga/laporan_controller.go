@@ -1,6 +1,7 @@
 package warga
 
 import (
+	"fmt"
 	"math"
 	"net/http"
 	"strconv"
@@ -77,18 +78,12 @@ func CreateLaporan(c *gin.Context) {
 		})
 		return
 	}
+
 	judul := strings.TrimSpace(c.PostForm("judul"))
-	if judul == "" {
+	if judul == "" || len(judul) > 150 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
-			"message": "Judul laporan tidak boleh kosong",
-		})
-		return
-	}
-	if len(judul) > 150 {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  "error",
-			"message": "Judul laporan maksimal 150 karakter",
+			"message": "Judul wajib diisi dan maksimal 150 karakter",
 		})
 		return
 	}
@@ -103,92 +98,60 @@ func CreateLaporan(c *gin.Context) {
 	}
 
 	tipeKerusakan := strings.TrimSpace(c.PostForm("tipe_kerusakan"))
-	if tipeKerusakan == "" {
+	if tipeKerusakan == "" || len(tipeKerusakan) > 150 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
-			"message": "Tipe kerusakan tidak boleh kosong",
-		})
-		return
-	}
-	if len(tipeKerusakan) > 150 {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  "error",
-			"message": "Tipe kerusakan maksimal 150 karakter",
+			"message": "Tipe kerusakan wajib diisi dan maksimal 150 karakter",
 		})
 		return
 	}
 
-	latStr := c.PostForm("latitude")
-	lngStr := c.PostForm("longitude")
-	wilayahIDStr := c.PostForm("wilayah_id")
-
-	lat, err := strconv.ParseFloat(latStr, 64)
+	lat, err := strconv.ParseFloat(c.PostForm("latitude"), 64)
 	if err != nil || math.IsNaN(lat) || math.IsInf(lat, 0) || lat < -90 || lat > 90 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
-			"message": "Latitude tidak valid (harus berada di antara -90 dan 90)",
+			"message": "Latitude tidak valid",
 		})
 		return
 	}
 
-	lng, err := strconv.ParseFloat(lngStr, 64)
+	lng, err := strconv.ParseFloat(c.PostForm("longitude"), 64)
 	if err != nil || math.IsNaN(lng) || math.IsInf(lng, 0) || lng < -180 || lng > 180 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
-			"message": "Longitude tidak valid (harus berada di antara -180 dan 180)",
+			"message": "Longitude tidak valid",
 		})
 		return
 	}
 
-	fileHeader, err := c.FormFile("foto")
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  "error",
-			"message": "foto laporan wajib di unggah",
-			"error":   "foto laporan wajib di unggah",
-		})
-		return
-	}
-
-	if errVal := utils.ValidateImageFile(fileHeader); errVal != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  "error",
-			"message": errVal.Error(),
-			"error":   errVal.Error(),
-		})
-		return
-	}
-
-	// Menentukan wilayah id berdasarkan inputan wilayah atau OSM
+	wilayahIDStr := c.PostForm("wilayah_id")
 	var wilayahID uint
+
 	if wilayahIDStr != "" {
 		id, err := strconv.ParseUint(wilayahIDStr, 10, 32)
 		if err != nil || id == 0 {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status":  "error",
 				"message": "Wilayah ID tidak valid",
-				"error":   "Wilayah ID tidak valid",
 			})
 			return
 		}
 		wilayahID = uint(id)
 	}
 
-	// Ambil data cadangan dari OSM (Nama Wilayah & Deteksi Jenis Jalan)
-	namaWilayahOSM, jenisJalanOSM, errOSM := utils.ReverseGeocodeOSM(lat, lng)
-
-	if wilayahID == 0 && errOSM == nil {
-		wilayah, errFind := utils.FindWilayahByNama(config.DB, namaWilayahOSM)
-		if errFind == nil {
-			wilayahID = wilayah.ID
-		}
-	}
-
-	if wilayahID == 0 {
+	fileHeader, err := c.FormFile("foto")
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
-			"message": "Wilayah tidak ditemukan, mohon pilih manual",
-			"error":   "Wilayah tidak ditemukan, mohon pilih manual",
+			"message": "Foto laporan wajib diunggah",
+		})
+		return
+	}
+
+	if err := utils.ValidateImageFile(fileHeader); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": err.Error(),
 		})
 		return
 	}
@@ -197,43 +160,62 @@ func CreateLaporan(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
 			"message": "Koneksi database tidak tersedia",
-			"error":   "Koneksi database tidak tersedia",
 		})
 		return
 	}
 
-	// Validasi bahwa WilayahID merujuk ke wilayah aktif (tidak soft-deleted)
+	namaWilayahOSM, jenisJalanOSM, errOSM := utils.ReverseGeocodeOSM(lat, lng)
+
+	fmt.Printf(
+		"[ROADIS OSM] lat=%f lng=%f wilayah=%q jenis_jalan=%q error=%v\n",
+		lat,
+		lng,
+		namaWilayahOSM,
+		jenisJalanOSM,
+		errOSM,
+	)
+
+	if wilayahID == 0 && errOSM == nil {
+		wilayah, err := utils.FindWilayahByNama(config.DB, namaWilayahOSM)
+		if err == nil {
+			wilayahID = wilayah.ID
+		}
+	}
+
+	if wilayahID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Wilayah tidak ditemukan, silakan pilih manual",
+		})
+		return
+	}
+
 	var targetWilayah models.Wilayah
-	if err := config.DB.Where("id = ? AND deleted_at IS NULL", wilayahID).First(&targetWilayah).Error; err != nil {
+	if err := config.DB.Where(
+		"id = ? AND deleted_at IS NULL",
+		wilayahID,
+	).First(&targetWilayah).Error; err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
 			"message": "Wilayah tidak valid atau sudah tidak aktif",
-			"error":   "Wilayah tidak valid atau sudah tidak aktif",
 		})
 		return
 	}
 
-	// Menentukan jenis jalan
 	jenisJalan := strings.ToLower(strings.TrimSpace(jenisJalanOSM))
-
-	if jenisJalan != "desa" &&
-		jenisJalan != "kabupaten" &&
-		jenisJalan != "provinsi" &&
-		jenisJalan != "nasional" {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{
-			"status":  "error",
-			"message": "Jenis jalan belum berhasil ditentukan dari OSM. Silakan coba kembali.",
-		})
-		return
+	switch jenisJalan {
+	case "desa", "kabupaten", "provinsi", "nasional":
+	case "belum_pasti", "":
+		jenisJalan = "belum_pasti"
+	default:
+		jenisJalan = "belum_pasti"
 	}
 
-	// Upload foto setelah semua validasi input dan wilayah berhasil
 	imageURL, err := LaporanUploader(fileHeader)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
 			"message": "Gagal upload foto",
-			"error":   "Gagal upload foto",
 		})
 		return
 	}
@@ -251,14 +233,11 @@ func CreateLaporan(c *gin.Context) {
 		Status:        "menunggu",
 	}
 
-	// Simpan laporan ke database
-	result := config.DB.Create(&laporan)
-	if result.Error != nil {
+	if err := config.DB.Create(&laporan).Error; err != nil {
 		_ = utils.DeleteCloudinary(imageURL)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
 			"message": "Gagal menyimpan laporan",
-			"error":   "Terjadi kesalahan pada sistem saat menyimpan laporan",
 		})
 		return
 	}
@@ -362,10 +341,14 @@ func KirimNotifikasiLaporanBaru(laporan models.LaporanKerusakan) {
 
 	var adminTujuan []models.User
 
-	// Superadmin menerima notifikasi semua jenis jalan.
 	if err := config.DB.
 		Where("role = ?", models.RoleSuperAdmin).
 		Find(&adminTujuan).Error; err != nil {
+		config.DB.Logger.Error(
+			config.DB.Statement.Context,
+			"Gagal mengambil Superadmin: %v",
+			err,
+		)
 		return
 	}
 
@@ -373,8 +356,6 @@ func KirimNotifikasiLaporanBaru(laporan models.LaporanKerusakan) {
 
 	switch jenisJalan {
 	case "nasional", "provinsi", "kabupaten":
-		// Tidak ada admin provinsi.
-		// Semua laporan jalan selain desa diteruskan ke admin PU.
 		if err := config.DB.
 			Where("role = ?", models.RoleAdminPu).
 			Find(&adminTeknis).Error; err != nil {
@@ -396,14 +377,13 @@ func KirimNotifikasiLaporanBaru(laporan models.LaporanKerusakan) {
 				Find(&adminTeknis).Error; err != nil {
 				config.DB.Logger.Error(
 					config.DB.Statement.Context,
-					"Gagal mengambil admin pemdes: %v",
+					"Gagal mengambil admin Pemdes: %v",
 					err,
 				)
 			}
 		}
 	}
 
-	// Gabungkan penerima dan hindari notifikasi ganda.
 	semuaAdmin := append(adminTujuan, adminTeknis...)
 	seen := make(map[uint]bool)
 
@@ -418,14 +398,14 @@ func KirimNotifikasiLaporanBaru(laporan models.LaporanKerusakan) {
 		}
 		seen[admin.ID] = true
 
-		err := config.DB.Create(&models.Notifikasi{
+		notifikasi := models.Notifikasi{
 			UserID:    admin.ID,
 			LaporanID: laporan.ID,
 			Judul:     "Laporan Baru Masuk",
 			Pesan:     "Laporan baru telah dikirimkan oleh " + pengirim,
-		}).Error
+		}
 
-		if err != nil {
+		if err := config.DB.Create(&notifikasi).Error; err != nil {
 			config.DB.Logger.Error(
 				config.DB.Statement.Context,
 				"Gagal membuat notifikasi laporan: %v",
@@ -575,5 +555,54 @@ func GetAllLaporanPeta(c *gin.Context) {
 		"status":  "success",
 		"message": "Semua laporan berhasil diambil",
 		"data":    responseData,
+	})
+}
+
+func CekJalan(c *gin.Context) {
+	latStr := strings.TrimSpace(c.Query("latitude"))
+	lngStr := strings.TrimSpace(c.Query("longitude"))
+
+	lat, errLat := strconv.ParseFloat(latStr, 64)
+	lng, errLng := strconv.ParseFloat(lngStr, 64)
+
+	if errLat != nil || errLng != nil ||
+		math.IsNaN(lat) || math.IsInf(lat, 0) ||
+		math.IsNaN(lng) || math.IsInf(lng, 0) ||
+		lat < -90 || lat > 90 ||
+		lng < -180 || lng > 180 {
+
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Latitude atau longitude tidak valid",
+			"data":    nil,
+		})
+		return
+	}
+
+	// Memeriksa apakah terdapat jalan dalam radius 20 meter.
+	hasil, err := utils.ValidasiJarakJalanOSM(lat, lng)
+
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{
+			"status":  "error",
+			"message": "Gagal memeriksa jalan dari OpenStreetMap",
+			"data":    nil,
+		})
+		return
+	}
+
+	if !hasil.Terdeteksi {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "success",
+			"message": "Jalan tidak ditemukan dalam radius 20 meter",
+			"data":    hasil,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": hasil.Keterangan,
+		"data":    hasil,
 	})
 }

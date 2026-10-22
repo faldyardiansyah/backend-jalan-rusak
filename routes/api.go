@@ -33,6 +33,7 @@ func SetupRoutes(r *gin.Engine) {
 			warga.GET("/laporan/:id", wargaController.GetLaporanByID)
 			warga.GET("/laporan/:id/chat", controllers.GetChatByLaporanID)
 			warga.POST("/laporan/:id/chat", controllers.SendPesanWarga)
+			warga.GET("/cek-jalan", wargaController.CekJalan)
 		}
 
 		admin := api.Group("/admin")
