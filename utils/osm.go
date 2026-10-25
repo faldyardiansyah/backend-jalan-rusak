@@ -1,4 +1,3 @@
-
 package utils
 
 import (
@@ -22,22 +21,6 @@ type osmResponse struct {
 	} `json:"address"`
 }
 
-type overpassResponse struct {
-	Elements []struct {
-		Tags map[string]string `json:"tags"`
-
-		Geometry []struct {
-			Lat float64 `json:"lat"`
-			Lon float64 `json:"lon"`
-		} `json:"geometry"`
-
-		Center *struct {
-			Lat float64 `json:"lat"`
-			Lon float64 `json:"lon"`
-		} `json:"center"`
-	} `json:"elements"`
-}
-
 type InfoJalanOSM struct {
 	NamaJalan  string  `json:"nama_jalan"`
 	JenisJalan string  `json:"jenis_jalan"`
@@ -48,17 +31,13 @@ type InfoJalanOSM struct {
 
 var osmBaseURL = "https://nominatim.openstreetmap.org/reverse"
 
-var overpassURLs = []string{
-	"https://overpass-api.de/api/interpreter",
-	"https://overpass.kumi.systems/api/interpreter",
-}
-
 var osmHTTPClient = &http.Client{
-	Timeout: 25 * time.Second,
+	Timeout: 8 * time.Second,
 }
 
-// ReverseGeocodeOSM tetap menggunakan signature lama
-// agar bisa dipanggil oleh CreateLaporan.
+// ReverseGeocodeOSM tetap mempertahankan signature lama.
+// Nama wilayah dicari melalui Nominatim, sedangkan jenis jalan
+// diambil dari GeoJSON lokal.
 func ReverseGeocodeOSM(
 	lat, lng float64,
 ) (namaWilayah string, jenisJalan string, err error) {
@@ -68,6 +47,14 @@ func ReverseGeocodeOSM(
 
 	jenisJalan = "belum_pasti"
 
+	// Ambil jenis jalan dari data lokal terlebih dahulu.
+	hasil, errJalan := cariJalanLokal(lat, lng, 100)
+	if errJalan == nil && hasil.Terdeteksi {
+		jenisJalan = hasil.JenisJalan
+	}
+
+	// Reverse geocoding tetap menggunakan Nominatim
+	// hanya untuk mendapatkan nama wilayah.
 	params := url.Values{}
 	params.Set("lat", fmt.Sprintf("%.7f", lat))
 	params.Set("lon", fmt.Sprintf("%.7f", lng))
@@ -75,48 +62,45 @@ func ReverseGeocodeOSM(
 	params.Set("addressdetails", "1")
 	params.Set("accept-language", "id")
 
-	req, err := http.NewRequest(
+	req, reqErr := http.NewRequest(
 		http.MethodGet,
 		osmBaseURL+"?"+params.Encode(),
 		nil,
 	)
-
-	if err == nil {
-		req.Header.Set("User-Agent", "ROADIS/1.0")
-
-		resp, requestErr := osmHTTPClient.Do(req)
-		if requestErr == nil {
-			if resp.StatusCode == http.StatusOK {
-				var data osmResponse
-				decodeErr := json.NewDecoder(resp.Body).Decode(&data)
-				resp.Body.Close()
-
-				if decodeErr == nil {
-					switch {
-					case data.Address.Village != "":
-						namaWilayah = data.Address.Village
-					case data.Address.Suburb != "":
-						namaWilayah = data.Address.Suburb
-					case data.Address.Town != "":
-						namaWilayah = data.Address.Town
-					}
-				}
-			} else {
-				resp.Body.Close()
-			}
-		}
+	if reqErr != nil {
+		return namaWilayah, jenisJalan, nil
 	}
 
-	// Fungsi lama tetap dapat digunakan untuk CreateLaporan.
-	hasil, errJalan := cariJalanOSM(lat, lng, 100)
-	if errJalan == nil && hasil.Terdeteksi {
-		jenisJalan = hasil.JenisJalan
+	req.Header.Set("User-Agent", "ROADIS/1.0 (road reporting application)")
+
+	resp, requestErr := osmHTTPClient.Do(req)
+	if requestErr != nil {
+		return namaWilayah, jenisJalan, nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return namaWilayah, jenisJalan, nil
+	}
+
+	var data osmResponse
+	if decodeErr := json.NewDecoder(resp.Body).Decode(&data); decodeErr != nil {
+		return namaWilayah, jenisJalan, nil
+	}
+
+	switch {
+	case data.Address.Village != "":
+		namaWilayah = data.Address.Village
+	case data.Address.Suburb != "":
+		namaWilayah = data.Address.Suburb
+	case data.Address.Town != "":
+		namaWilayah = data.Address.Town
 	}
 
 	return namaWilayah, jenisJalan, nil
 }
 
-// ValidasiJarakJalanOSM mencari jalan terdekat dalam radius 20 meter.
+// ValidasiJarakJalanOSM mencari ruas jalan lokal dalam radius 20 meter.
 func ValidasiJarakJalanOSM(
 	lat, lng float64,
 ) (InfoJalanOSM, error) {
@@ -124,176 +108,28 @@ func ValidasiJarakJalanOSM(
 		return InfoJalanOSM{}, fmt.Errorf("koordinat tidak valid")
 	}
 
-	return cariJalanOSM(lat, lng, 20)
+	return cariJalanLokal(lat, lng, 20)
 }
 
-// PerkiraanKewenanganJalan memperkirakan kewenangan berdasarkan
-// kelas highway OSM. Hasilnya bukan penetapan hukum resmi.
+// PerkiraanKewenanganJalan hanya perkiraan berdasarkan kelas highway OSM.
+// Kelas OSM tidak membuktikan kewenangan administratif resmi.
 func PerkiraanKewenanganJalan(highway string) string {
 	switch strings.ToLower(strings.TrimSpace(highway)) {
-	case "motorway", "motorway_link",
-		"trunk", "trunk_link":
+	case "motorway", "motorway_link", "trunk", "trunk_link":
 		return "nasional"
-
-	case "primary", "primary_link",
-		"secondary", "secondary_link":
+	case "primary", "primary_link", "secondary", "secondary_link":
 		return "belum_pasti"
-
 	case "tertiary", "tertiary_link":
 		return "kabupaten"
-
-	case "residential", "living_street",
-		"unclassified", "service", "road":
+	case "residential", "living_street", "unclassified", "service", "road":
 		return "belum_pasti"
-
 	default:
 		return "belum_pasti"
 	}
 }
 
-// cariJalanOSM mengambil ruas jalan dan memilih yang paling dekat.
-func cariJalanOSM(
-	lat, lng, radius float64,
-) (InfoJalanOSM, error) {
-	info := InfoJalanOSM{
-		NamaJalan:  "",
-		JenisJalan: "belum_pasti",
-		JarakMeter: -1,
-		Terdeteksi: false,
-		Keterangan: "Jalan belum teridentifikasi.",
-	}
-
-	query := fmt.Sprintf(
-		`[out:json][timeout:20];
-		way(around:%.0f,%.7f,%.7f)["highway"];
-		out tags center geom;`,
-		radius, lat, lng,
-	)
-
-	var data overpassResponse
-	var lastErr error
-	berhasil := false
-
-	for _, endpoint := range overpassURLs {
-		form := url.Values{}
-		form.Set("data", query)
-
-		req, err := http.NewRequest(
-			http.MethodPost,
-			endpoint,
-			strings.NewReader(form.Encode()),
-		)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-
-		req.Header.Set(
-			"Content-Type",
-			"application/x-www-form-urlencoded",
-		)
-		req.Header.Set("User-Agent", "ROADIS/1.0")
-
-		resp, err := osmHTTPClient.Do(req)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			lastErr = fmt.Errorf(
-				"Overpass HTTP %d",
-				resp.StatusCode,
-			)
-			resp.Body.Close()
-			continue
-		}
-
-		decodeErr := json.NewDecoder(resp.Body).Decode(&data)
-		resp.Body.Close()
-
-		if decodeErr != nil {
-			lastErr = decodeErr
-			continue
-		}
-
-		berhasil = true
-		break
-	}
-
-	if !berhasil {
-		if lastErr == nil {
-			lastErr = fmt.Errorf("layanan OSM tidak tersedia")
-		}
-		return info, lastErr
-	}
-
-	jarakTerbaik := math.MaxFloat64
-	var tagsTerbaik map[string]string
-
-	for _, element := range data.Elements {
-		if strings.TrimSpace(element.Tags["highway"]) == "" {
-			continue
-		}
-
-		jarak := math.MaxFloat64
-
-		for i := 0; i+1 < len(element.Geometry); i++ {
-			a := element.Geometry[i]
-			b := element.Geometry[i+1]
-
-			d := jarakKeSegmen(
-				lat, lng,
-				a.Lat, a.Lon,
-				b.Lat, b.Lon,
-			)
-
-			if d < jarak {
-				jarak = d
-			}
-		}
-
-		if len(element.Geometry) < 2 && element.Center != nil {
-			jarak = jarakMeter(
-				lat, lng,
-				element.Center.Lat,
-				element.Center.Lon,
-			)
-		}
-
-		if jarak < jarakTerbaik {
-			jarakTerbaik = jarak
-			tagsTerbaik = element.Tags
-		}
-	}
-
-	if tagsTerbaik == nil || jarakTerbaik > radius {
-		info.Keterangan = fmt.Sprintf(
-			"Tidak ditemukan jalan dalam radius %.0f meter.",
-			radius,
-		)
-		return info, nil
-	}
-
-	info.NamaJalan = strings.TrimSpace(tagsTerbaik["name"])
-	if info.NamaJalan == "" {
-		info.NamaJalan = "Nama jalan belum tersedia di OSM"
-	}
-
-	info.JarakMeter = math.Round(jarakTerbaik*100) / 100
-	info.Terdeteksi = true
-	info.JenisJalan = PerkiraanKewenanganJalan(
-		tagsTerbaik["highway"],
-	)
-	info.Keterangan = "Jalan ditemukan melalui OSM. Kewenangan merupakan perkiraan berdasarkan kelas jalan."
-
-	return info, nil
-}
-
 // Menghitung jarak dua koordinat dalam meter.
-func jarakMeter(
-	lat1, lon1, lat2, lon2 float64,
-) float64 {
+func jarakMeter(lat1, lon1, lat2, lon2 float64) float64 {
 	const radiusBumi = 6371000.0
 
 	toRad := func(v float64) float64 {
@@ -341,13 +177,10 @@ func jarakKeSegmen(
 	t := -(ax*dx + ay*dy) / panjangKuadrat
 	t = math.Max(0, math.Min(1, t))
 
-	return math.Hypot(
-		ax+t*dx,
-		ay+t*dy,
-	)
+	return math.Hypot(ax+t*dx, ay+t*dy)
 }
 
-// Mencari wilayah berdasarkan nama OSM di database wilayah yang sudah ada.
+// Mencari wilayah berdasarkan nama OSM di database wilayah.
 func FindWilayahByNama(
 	db *gorm.DB,
 	nama string,
@@ -362,7 +195,6 @@ func FindWilayahByNama(
 	}
 
 	var wilayah models.Wilayah
-
 	err := db.Where(
 		"nama LIKE ? AND deleted_at IS NULL",
 		"%"+nama+"%",

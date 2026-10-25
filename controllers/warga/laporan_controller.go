@@ -1,6 +1,7 @@
 package warga
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -583,9 +584,23 @@ func CekJalan(c *gin.Context) {
 	hasil, err := utils.ValidasiJarakJalanOSM(lat, lng)
 
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{
+		fmt.Printf("[ROADIS CEK JALAN] Gagal: %v\n", err)
+
+		// Layanan OSM gagal: BUKAN berarti jalan tidak ada.
+		if errors.Is(err, utils.ErrOSMTidakTersedia) {
+			c.Header("Retry-After", "10")
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"status":  "error",
+				"kode":    "layanan_tidak_tersedia",
+				"message": "Layanan data jalan (OpenStreetMap) sedang sibuk. Silakan coba lagi beberapa saat.",
+				"data":    nil,
+			})
+			return
+		}
+
+		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
-			"message": "Gagal memeriksa jalan dari OpenStreetMap",
+			"message": "Gagal memeriksa jalan",
 			"data":    nil,
 		})
 		return
