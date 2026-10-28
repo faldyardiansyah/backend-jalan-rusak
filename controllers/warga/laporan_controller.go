@@ -33,12 +33,18 @@ type LaporanResponse struct {
 	WaktuLaporan  string  `json:"waktu_laporan"`
 	FotoBukti     string  `json:"foto_bukti,omitempty"`
 	CatatanAdmin  string  `json:"catatan_admin,omitempty"`
+	WilayahID     uint    `json:"wilayah_id"`
+	WilayahNama   string  `json:"wilayah_nama"`
+	JenisJalan    string  `json:"jenis_jalan"`
 }
 
 func FormatLaporanToResponse(lap models.LaporanKerusakan) LaporanResponse {
 	return LaporanResponse{
 		ID:            lap.ID,
 		UserID:        lap.UserID,
+		WilayahID:     lap.WilayahID,
+		WilayahNama:   lap.Wilayah.Nama,
+		JenisJalan:    lap.JenisJalan,
 		Judul:         lap.Judul,
 		Deskripsi:     lap.Deskripsi,
 		Latitude:      lap.Latitude,
@@ -204,10 +210,9 @@ func CreateLaporan(c *gin.Context) {
 	}
 
 	jenisJalan := strings.ToLower(strings.TrimSpace(jenisJalanOSM))
+
 	switch jenisJalan {
 	case "desa", "kabupaten", "provinsi", "nasional":
-	case "belum_pasti", "":
-		jenisJalan = "belum_pasti"
 	default:
 		jenisJalan = "belum_pasti"
 	}
@@ -338,36 +343,31 @@ func KirimNotifikasiLaporanBaru(laporan models.LaporanKerusakan) {
 		return
 	}
 
-	jenisJalan := strings.ToLower(strings.TrimSpace(laporan.JenisJalan))
-
 	var adminTujuan []models.User
 
+	// Semua laporan tetap masuk ke Superadmin untuk pemantauan.
 	if err := config.DB.
 		Where("role = ?", models.RoleSuperAdmin).
 		Find(&adminTujuan).Error; err != nil {
-		config.DB.Logger.Error(
-			config.DB.Statement.Context,
-			"Gagal mengambil Superadmin: %v",
-			err,
-		)
+		fmt.Printf("[ROADIS NOTIF] Gagal mengambil Superadmin: %v\n", err)
 		return
 	}
 
+	jenisJalan := strings.ToLower(strings.TrimSpace(laporan.JenisJalan))
 	var adminTeknis []models.User
 
 	switch jenisJalan {
 	case "nasional", "provinsi", "kabupaten":
+		// Kewenangan ini diarahkan ke admin PU sesuai struktur aplikasi saat ini.
 		if err := config.DB.
 			Where("role = ?", models.RoleAdminPu).
 			Find(&adminTeknis).Error; err != nil {
-			config.DB.Logger.Error(
-				config.DB.Statement.Context,
-				"Gagal mengambil admin PU: %v",
-				err,
-			)
+			fmt.Printf("[ROADIS NOTIF] Gagal mengambil admin PU: %v\n", err)
 		}
 
-	case "desa":
+	case "desa", "belum_pasti", "":
+		// Jalan desa atau jalan yang belum terverifikasi diarahkan
+		// ke Pemdes pada wilayah yang dipilih saat membuat laporan.
 		if laporan.WilayahID > 0 {
 			if err := config.DB.
 				Where(
@@ -376,11 +376,7 @@ func KirimNotifikasiLaporanBaru(laporan models.LaporanKerusakan) {
 					laporan.WilayahID,
 				).
 				Find(&adminTeknis).Error; err != nil {
-				config.DB.Logger.Error(
-					config.DB.Statement.Context,
-					"Gagal mengambil admin Pemdes: %v",
-					err,
-				)
+				fmt.Printf("[ROADIS NOTIF] Gagal mengambil admin Pemdes: %v\n", err)
 			}
 		}
 	}
@@ -407,9 +403,9 @@ func KirimNotifikasiLaporanBaru(laporan models.LaporanKerusakan) {
 		}
 
 		if err := config.DB.Create(&notifikasi).Error; err != nil {
-			config.DB.Logger.Error(
-				config.DB.Statement.Context,
-				"Gagal membuat notifikasi laporan: %v",
+			fmt.Printf(
+				"[ROADIS NOTIF] Gagal membuat notifikasi untuk user %d: %v\n",
+				admin.ID,
 				err,
 			)
 		}

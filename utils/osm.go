@@ -38,6 +38,7 @@ var osmHTTPClient = &http.Client{
 // ReverseGeocodeOSM tetap mempertahankan signature lama.
 // Nama wilayah dicari melalui Nominatim, sedangkan jenis jalan
 // diambil dari GeoJSON lokal.
+
 func ReverseGeocodeOSM(
 	lat, lng float64,
 ) (namaWilayah string, jenisJalan string, err error) {
@@ -47,14 +48,14 @@ func ReverseGeocodeOSM(
 
 	jenisJalan = "belum_pasti"
 
-	// Ambil jenis jalan dari data lokal terlebih dahulu.
+	// Ambil kelas jalan dari GeoJSON lokal.
 	hasil, errJalan := cariJalanLokal(lat, lng, 100)
 	if errJalan == nil && hasil.Terdeteksi {
-		jenisJalan = hasil.JenisJalan
+		// Ubah kelas highway menjadi perkiraan kewenangan.
+		jenisJalan = PerkiraanKewenanganJalan(hasil.JenisJalan)
 	}
 
-	// Reverse geocoding tetap menggunakan Nominatim
-	// hanya untuk mendapatkan nama wilayah.
+	// Nominatim digunakan untuk mendapatkan nama wilayah.
 	params := url.Values{}
 	params.Set("lat", fmt.Sprintf("%.7f", lat))
 	params.Set("lon", fmt.Sprintf("%.7f", lng))
@@ -71,7 +72,10 @@ func ReverseGeocodeOSM(
 		return namaWilayah, jenisJalan, nil
 	}
 
-	req.Header.Set("User-Agent", "ROADIS/1.0 (road reporting application)")
+	req.Header.Set(
+		"User-Agent",
+		"ROADIS/1.0 (road reporting application)",
+	)
 
 	resp, requestErr := osmHTTPClient.Do(req)
 	if requestErr != nil {
@@ -100,29 +104,26 @@ func ReverseGeocodeOSM(
 	return namaWilayah, jenisJalan, nil
 }
 
-// ValidasiJarakJalanOSM mencari ruas jalan lokal dalam radius 20 meter.
-func ValidasiJarakJalanOSM(
-	lat, lng float64,
-) (InfoJalanOSM, error) {
-	if !IsValidCoordinate(lat, lng) {
-		return InfoJalanOSM{}, fmt.Errorf("koordinat tidak valid")
-	}
-
-	return cariJalanLokal(lat, lng, 20)
-}
-
 // PerkiraanKewenanganJalan hanya perkiraan berdasarkan kelas highway OSM.
 // Kelas OSM tidak membuktikan kewenangan administratif resmi.
 func PerkiraanKewenanganJalan(highway string) string {
 	switch strings.ToLower(strings.TrimSpace(highway)) {
 	case "motorway", "motorway_link", "trunk", "trunk_link":
 		return "nasional"
-	case "primary", "primary_link", "secondary", "secondary_link":
+
+	case "primary", "primary_link":
 		return "belum_pasti"
+
+	case "secondary", "secondary_link":
+		return "belum_pasti"
+
 	case "tertiary", "tertiary_link":
 		return "kabupaten"
-	case "residential", "living_street", "unclassified", "service", "road":
+
+	case "residential", "living_street",
+		"unclassified", "service", "road":
 		return "belum_pasti"
+
 	default:
 		return "belum_pasti"
 	}

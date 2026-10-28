@@ -184,7 +184,7 @@ func cariJalanLokal(
 				hasil.NamaJalan = "Nama jalan tidak tersedia di OSM"
 			}
 
-			hasil.JenisJalan = ruas.Jenis
+			hasil.JenisJalan = PerkiraanKewenanganJalan(ruas.Jenis)
 			hasil.JarakMeter = jarak
 			hasil.Terdeteksi = true
 			hasil.Keterangan = "Jalan ditemukan dari data OSM lokal"
@@ -192,4 +192,12 @@ func cariJalanLokal(
 	}
 
 	return hasil, nil
+}
+
+func ValidasiJarakJalanOSM(lat, lng float64) (InfoJalanOSM, error) {
+	if !IsValidCoordinate(lat, lng) {
+		return InfoJalanOSM{}, fmt.Errorf("koordinat latitude atau longitude tidak valid")
+	}
+
+	return cariJalanLokal(lat, lng, 20)
 }
