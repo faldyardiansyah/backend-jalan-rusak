@@ -35,7 +35,9 @@ func CekAksesLaporan(role string, userID uint, laporan models.LaporanKerusakan) 
 		return admin.WilayahID != nil && *admin.WilayahID > 0 && laporan.WilayahID > 0 && *admin.WilayahID == laporan.WilayahID
 
 	case string(models.RoleAdminPu):
-		if jenisJalan != "kabupaten" {
+		// Jalan kabupaten, provinsi, dan nasional (karena studi kasus terfokus di Kabupaten Indramayu
+		// dan jalan provinsi/nasional di wilayah kab ditampung oleh Admin PU & Superadmin)
+		if jenisJalan != "kabupaten" && jenisJalan != "provinsi" && jenisJalan != "nasional" {
 			return false
 		}
 		return true

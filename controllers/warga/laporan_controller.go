@@ -21,40 +21,54 @@ var (
 )
 
 type LaporanResponse struct {
-	ID            uint    `json:"id"`
-	UserID        uint    `json:"user_id"`
-	Judul         string  `json:"judul"`
-	Deskripsi     string  `json:"deskripsi"`
-	Latitude      float64 `json:"latitude"`
-	Longitude     float64 `json:"longitude"`
-	ImageURL      string  `json:"image_url"`
-	TipeKerusakan string  `json:"tipe_kerusakan"`
-	Status        string  `json:"status"`
-	WaktuLaporan  string  `json:"waktu_laporan"`
-	FotoBukti     string  `json:"foto_bukti,omitempty"`
-	CatatanAdmin  string  `json:"catatan_admin,omitempty"`
-	WilayahID     uint    `json:"wilayah_id"`
-	WilayahNama   string  `json:"wilayah_nama"`
-	JenisJalan    string  `json:"jenis_jalan"`
+	ID             uint    `json:"id"`
+	UserID         uint    `json:"user_id"`
+	Judul          string  `json:"judul"`
+	Deskripsi      string  `json:"deskripsi"`
+	Latitude       float64 `json:"latitude"`
+	Longitude      float64 `json:"longitude"`
+	ImageURL       string  `json:"image_url"`
+	TipeKerusakan  string  `json:"tipe_kerusakan"`
+	Status         string  `json:"status"`
+	WaktuLaporan   string  `json:"waktu_laporan"`
+	FotoBukti      string  `json:"foto_bukti,omitempty"`
+	CatatanAdmin   string  `json:"catatan_admin,omitempty"`
+	WilayahID      uint    `json:"wilayah_id"`
+	WilayahNama    string  `json:"wilayah_nama"`
+	JenisJalan     string  `json:"jenis_jalan"`
+	KewenanganJalan string `json:"kewenangan_jalan"`
 }
 
 func FormatLaporanToResponse(lap models.LaporanKerusakan) LaporanResponse {
+	kewenangan := "Belum terverifikasi"
+	switch strings.ToLower(strings.TrimSpace(lap.JenisJalan)) {
+	case "desa":
+		kewenangan = "Pemerintah Desa (Pemdes)"
+	case "kabupaten":
+		kewenangan = "Pemerintah Kabupaten (Kab. Indramayu)"
+	case "provinsi":
+		kewenangan = "Pemerintah Provinsi (Provinsi Jawa Barat)"
+	case "nasional":
+		kewenangan = "Pemerintah Pusat (Nasional RI / PUPR)"
+	}
+
 	return LaporanResponse{
-		ID:            lap.ID,
-		UserID:        lap.UserID,
-		WilayahID:     lap.WilayahID,
-		WilayahNama:   lap.Wilayah.Nama,
-		JenisJalan:    lap.JenisJalan,
-		Judul:         lap.Judul,
-		Deskripsi:     lap.Deskripsi,
-		Latitude:      lap.Latitude,
-		Longitude:     lap.Longitude,
-		ImageURL:      lap.ImageURL,
-		TipeKerusakan: lap.TipeKerusakan,
-		Status:        lap.Status,
-		WaktuLaporan:  utils.FormatTanggalIndo(&lap.CreatedAt),
-		FotoBukti:     lap.FotoBukti,
-		CatatanAdmin:  lap.CatatanAdmin,
+		ID:              lap.ID,
+		UserID:          lap.UserID,
+		WilayahID:       lap.WilayahID,
+		WilayahNama:     lap.Wilayah.Nama,
+		JenisJalan:      lap.JenisJalan,
+		KewenanganJalan: kewenangan,
+		Judul:           lap.Judul,
+		Deskripsi:       lap.Deskripsi,
+		Latitude:        lap.Latitude,
+		Longitude:       lap.Longitude,
+		ImageURL:        lap.ImageURL,
+		TipeKerusakan:   lap.TipeKerusakan,
+		Status:          lap.Status,
+		WaktuLaporan:    utils.FormatTanggalIndo(&lap.CreatedAt),
+		FotoBukti:       lap.FotoBukti,
+		CatatanAdmin:    lap.CatatanAdmin,
 	}
 }
 
@@ -313,7 +327,7 @@ func GetLaporanByID(c *gin.Context) {
 	}
 
 	var laporan models.LaporanKerusakan
-	if err := config.DB.Where("id = ? AND deleted_at IS NULL", id).First(&laporan).Error; err != nil {
+	if err := config.DB.Preload("User").Preload("Wilayah").Where("id = ? AND deleted_at IS NULL", id).First(&laporan).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"status":  "error",
 			"message": "Laporan tidak ditemukan",
@@ -454,6 +468,8 @@ func GetRiwayatLaporan(c *gin.Context) {
 	var listLaporan []models.LaporanKerusakan
 
 	if err := config.DB.
+		Preload("User").
+		Preload("Wilayah").
 		Where("user_id = ? AND deleted_at IS NULL", userID).
 		Order("created_at DESC").
 		Find(&listLaporan).Error; err != nil {
@@ -515,6 +531,8 @@ func GetAllLaporanPeta(c *gin.Context) {
 	}
 
 	query := config.DB.Model(&models.LaporanKerusakan{}).
+		Preload("User").
+		Preload("Wilayah").
 		Where("deleted_at IS NULL")
 
 	if status := strings.ToLower(strings.TrimSpace(c.Query("status"))); status != "" {

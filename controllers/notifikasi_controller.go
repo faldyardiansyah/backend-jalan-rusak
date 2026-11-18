@@ -324,9 +324,14 @@ func KirimNotifikasiChatWarga(laporan models.LaporanKerusakan) {
 		config.DB.
 			Where("role = ? AND wilayah_id = ?", models.RoleAdminPemdes, laporan.WilayahID).
 			Find(&adminTujuan)
-	case "kabupaten":
+	case "kabupaten", "provinsi", "nasional":
+		// Jalan kabupaten, serta jalan provinsi & nasional ditampung oleh Admin PU dan Superadmin
 		config.DB.
-			Where("role = ?", models.RoleAdminPu).
+			Where("role IN ?", []string{string(models.RoleAdminPu), string(models.RoleSuperAdmin)}).
+			Find(&adminTujuan)
+	default:
+		config.DB.
+			Where("role = ?", models.RoleSuperAdmin).
 			Find(&adminTujuan)
 	}
 

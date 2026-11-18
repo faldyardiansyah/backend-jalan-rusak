@@ -534,7 +534,7 @@ func GetAdminInbox(c *gin.Context) {
 		query = query.Where("laporan_kerusakan.wilayah_id = ? AND laporan_kerusakan.jenis_jalan = ?", *adminUser.WilayahID, "desa")
 
 	case string(models.RoleAdminPu):
-		query = query.Where("laporan_kerusakan.jenis_jalan = ?", "kabupaten")
+		query = query.Where("laporan_kerusakan.jenis_jalan IN ?", []string{"kabupaten", "provinsi", "nasional"})
 
 	case string(models.RoleSuperAdmin):
 		// Superadmin melihat seluruh percakapan

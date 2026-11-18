@@ -112,20 +112,20 @@ func PerkiraanKewenanganJalan(highway string) string {
 		return "nasional"
 
 	case "primary", "primary_link":
-		return "belum_pasti"
+		return "provinsi"
 
-	case "secondary", "secondary_link":
-		return "belum_pasti"
-
-	case "tertiary", "tertiary_link":
+	case "secondary", "secondary_link", "tertiary", "tertiary_link":
 		return "kabupaten"
 
 	case "residential", "living_street",
-		"unclassified", "service", "road":
-		return "belum_pasti"
+		"unclassified", "service", "road", "track", "path":
+		return "desa"
+
+	case "desa", "kabupaten", "provinsi", "nasional":
+		return strings.ToLower(strings.TrimSpace(highway))
 
 	default:
-		return "belum_pasti"
+		return "desa"
 	}
 }
 
