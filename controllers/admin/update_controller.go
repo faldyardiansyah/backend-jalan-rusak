@@ -334,3 +334,168 @@ func UpdateStatusLaporan(c *gin.Context) {
 		"data":    laporan,
 	})
 }
+
+type UpdateSeverityReq struct {
+	Severity string `json:"severity" form:"severity"`
+}
+
+// UpdateSeverityLaporan menangani pembaruan tingkat keparahan resmi oleh admin berwenang.
+// Admin Pemdes: hanya jalan desa di wilayahnya.
+// Admin PU: hanya jalan kabupaten.
+// Superadmin: wewenang administratif global.
+func UpdateSeverityLaporan(c *gin.Context) {
+	idStr := c.Param("id")
+	id, errID := strconv.ParseUint(idStr, 10, 32)
+	if errID != nil || id == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "ID laporan tidak valid",
+			"error":   "ID laporan tidak valid",
+		})
+		return
+	}
+
+	var req UpdateSeverityReq
+	if strings.Contains(c.ContentType(), "application/json") {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  "error",
+				"message": "Format JSON tidak valid: " + err.Error(),
+				"error":   "Format JSON tidak valid: " + err.Error(),
+			})
+			return
+		}
+	} else {
+		_ = c.ShouldBind(&req)
+	}
+
+	severity := strings.ToLower(strings.TrimSpace(req.Severity))
+	if severity == "" {
+		severity = strings.ToLower(strings.TrimSpace(c.PostForm("severity")))
+	}
+
+	switch severity {
+	case "ringan", "sedang", "berat", "belum_dinilai":
+		// valid
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Kategori keparahan tidak valid. Gunakan 'belum_dinilai', 'ringan', 'sedang', atau 'berat'",
+			"error":   "Kategori keparahan tidak valid",
+		})
+		return
+	}
+
+	roleVal, existsRole := c.Get("role")
+	userIDVal, existsUserID := c.Get("user_id")
+	if !existsRole || !existsUserID {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"message": "User tidak terautentikasi",
+			"error":   "User tidak terautentikasi",
+		})
+		return
+	}
+
+	var role models.UserRole
+	if rStrl, ok := roleVal.(string); ok {
+		role = models.UserRole(rStrl)
+	} else if rEnum, ok := roleVal.(models.UserRole); ok {
+		role = rEnum
+	}
+
+	var userID uint
+	switch v := userIDVal.(type) {
+	case uint:
+		userID = v
+	case float64:
+		userID = uint(v)
+	case int:
+		userID = uint(v)
+	}
+
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  "error",
+			"message": "User ID tidak valid",
+			"error":   "User ID tidak valid",
+		})
+		return
+	}
+
+	if config.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Koneksi database tidak tersedia",
+			"error":   "Koneksi database tidak tersedia",
+		})
+		return
+	}
+
+	var laporan models.LaporanKerusakan
+	if err := config.DB.Preload("User").Preload("Wilayah").Where("id = ? AND deleted_at IS NULL", id).First(&laporan).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"status":  "error",
+			"message": "Laporan tidak ditemukan",
+			"error":   "Laporan tidak ditemukan",
+		})
+		return
+	}
+
+	jenisJalanLower := strings.ToLower(laporan.JenisJalan)
+
+	if role != models.RoleAdminPemdes && role != models.RoleAdminPu && role != models.RoleSuperAdmin {
+		c.JSON(http.StatusForbidden, gin.H{
+			"status":  "error",
+			"message": "Akses tidak diizinkan",
+			"error":   "Akses tidak diizinkan",
+		})
+		return
+	}
+
+	if role == models.RoleAdminPemdes {
+		var adminUser models.User
+		if err := config.DB.First(&adminUser, userID).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{
+				"status":  "error",
+				"message": "Data admin tidak ditemukan",
+				"error":   "Data admin tidak ditemukan",
+			})
+			return
+		}
+
+		if adminUser.WilayahID == nil || *adminUser.WilayahID == 0 || laporan.WilayahID != *adminUser.WilayahID || jenisJalanLower != "desa" {
+			c.JSON(http.StatusForbidden, gin.H{
+				"status":  "error",
+				"message": "Anda tidak memiliki akses untuk mengubah tingkat keparahan laporan ini",
+				"error":   "Anda tidak memiliki akses untuk mengubah tingkat keparahan laporan ini",
+			})
+			return
+		}
+	}
+
+	if role == models.RoleAdminPu && jenisJalanLower != "kabupaten" {
+		c.JSON(http.StatusForbidden, gin.H{
+			"status":  "error",
+			"message": "Anda tidak memiliki akses untuk mengubah tingkat keparahan laporan ini",
+			"error":   "Anda tidak memiliki akses untuk mengubah tingkat keparahan laporan ini",
+		})
+		return
+	}
+
+	laporan.Severity = severity
+	if err := config.DB.Save(&laporan).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Gagal menyimpan tingkat keparahan laporan",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Tingkat keparahan laporan berhasil diperbarui",
+		"data":    laporan,
+	})
+}

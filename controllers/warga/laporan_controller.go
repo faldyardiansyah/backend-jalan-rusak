@@ -21,22 +21,25 @@ var (
 )
 
 type LaporanResponse struct {
-	ID             uint    `json:"id"`
-	UserID         uint    `json:"user_id"`
-	Judul          string  `json:"judul"`
-	Deskripsi      string  `json:"deskripsi"`
-	Latitude       float64 `json:"latitude"`
-	Longitude      float64 `json:"longitude"`
-	ImageURL       string  `json:"image_url"`
-	TipeKerusakan  string  `json:"tipe_kerusakan"`
-	Status         string  `json:"status"`
-	WaktuLaporan   string  `json:"waktu_laporan"`
-	FotoBukti      string  `json:"foto_bukti,omitempty"`
-	CatatanAdmin   string  `json:"catatan_admin,omitempty"`
-	WilayahID      uint    `json:"wilayah_id"`
-	WilayahNama    string  `json:"wilayah_nama"`
-	JenisJalan     string  `json:"jenis_jalan"`
-	KewenanganJalan string `json:"kewenangan_jalan"`
+	ID              uint     `json:"id"`
+	UserID          uint     `json:"user_id"`
+	Judul           string   `json:"judul"`
+	Deskripsi       string   `json:"deskripsi"`
+	Latitude        float64  `json:"latitude"`
+	Longitude       float64  `json:"longitude"`
+	ImageURL        string   `json:"image_url"`
+	TipeKerusakan   string   `json:"tipe_kerusakan"`
+	Status          string   `json:"status"`
+	Severity        string   `json:"severity"`
+	AIModel         string   `json:"ai_model,omitempty"`
+	AIConfidence    *float64 `json:"ai_confidence,omitempty"`
+	WaktuLaporan    string   `json:"waktu_laporan"`
+	FotoBukti       string   `json:"foto_bukti,omitempty"`
+	CatatanAdmin    string   `json:"catatan_admin,omitempty"`
+	WilayahID       uint     `json:"wilayah_id"`
+	WilayahNama     string   `json:"wilayah_nama"`
+	JenisJalan      string   `json:"jenis_jalan"`
+	KewenanganJalan string   `json:"kewenangan_jalan"`
 }
 
 func FormatLaporanToResponse(lap models.LaporanKerusakan) LaporanResponse {
@@ -50,6 +53,11 @@ func FormatLaporanToResponse(lap models.LaporanKerusakan) LaporanResponse {
 		kewenangan = "Pemerintah Provinsi (Provinsi Jawa Barat)"
 	case "nasional":
 		kewenangan = "Pemerintah Pusat (Nasional RI / PUPR)"
+	}
+
+	sev := lap.Severity
+	if sev == "" {
+		sev = "belum_dinilai"
 	}
 
 	return LaporanResponse{
@@ -66,6 +74,9 @@ func FormatLaporanToResponse(lap models.LaporanKerusakan) LaporanResponse {
 		ImageURL:        lap.ImageURL,
 		TipeKerusakan:   lap.TipeKerusakan,
 		Status:          lap.Status,
+		Severity:        sev,
+		AIModel:         lap.AIModel,
+		AIConfidence:    lap.AIConfidence,
 		WaktuLaporan:    utils.FormatTanggalIndo(&lap.CreatedAt),
 		FotoBukti:       lap.FotoBukti,
 		CatatanAdmin:    lap.CatatanAdmin,
@@ -240,6 +251,24 @@ func CreateLaporan(c *gin.Context) {
 		return
 	}
 
+	// Penilaian resmi tingkat keparahan hanya dapat ditetapkan oleh admin berwenang.
+	// Laporan baru dari warga selalu berstatus awal 'belum_dinilai'.
+	severity := "belum_dinilai"
+
+	aiModel := strings.TrimSpace(c.PostForm("ai_model"))
+	if len(aiModel) > 100 {
+		aiModel = aiModel[:100]
+	}
+
+	var aiConfidence *float64
+	if confStr := strings.TrimSpace(c.PostForm("ai_confidence")); confStr != "" {
+		if confVal, err := strconv.ParseFloat(confStr, 64); err == nil && !math.IsNaN(confVal) && !math.IsInf(confVal, 0) {
+			if confVal >= 0 && confVal <= 1.0 {
+				aiConfidence = &confVal
+			}
+		}
+	}
+
 	laporan := models.LaporanKerusakan{
 		UserID:        userID,
 		Judul:         judul,
@@ -250,6 +279,9 @@ func CreateLaporan(c *gin.Context) {
 		Longitude:     lng,
 		ImageURL:      imageURL,
 		TipeKerusakan: tipeKerusakan,
+		Severity:      severity,
+		AIModel:       aiModel,
+		AIConfidence:  aiConfidence,
 		Status:        "menunggu",
 	}
 

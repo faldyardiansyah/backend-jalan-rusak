@@ -18,6 +18,7 @@ type MapPoint struct {
 	Latitude      float64 `json:"latitude"`
 	Longitude     float64 `json:"longitude"`
 	Status        string  `json:"status"`
+	Severity      string  `json:"severity"`
 	TipeKerusakan string  `json:"tipe_kerusakan"`
 	JenisJalan    string  `json:"jenis_jalan"`
 	ImageURL      string  `json:"image_url"`
@@ -28,6 +29,20 @@ type MapPoint struct {
 }
 
 func GetMapLaporan(c *gin.Context) {
+	severity := strings.ToLower(strings.TrimSpace(c.Query("severity")))
+	if severity != "" && severity != "all" {
+		switch severity {
+		case "ringan", "sedang", "berat", "belum_dinilai":
+			// valid
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  "error",
+				"message": "Parameter severity tidak valid. Gunakan 'ringan', 'sedang', 'berat', atau 'belum_dinilai'",
+			})
+			return
+		}
+	}
+
 	if config.DB == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
@@ -80,6 +95,7 @@ func GetMapLaporan(c *gin.Context) {
 			laporan_kerusakan.latitude,
 			laporan_kerusakan.longitude,
 			laporan_kerusakan.status,
+			COALESCE(NULLIF(laporan_kerusakan.severity, ''), 'belum_dinilai') as severity,
 			laporan_kerusakan.tipe_kerusakan,
 			laporan_kerusakan.jenis_jalan,
 			laporan_kerusakan.image_url,
@@ -155,6 +171,16 @@ func GetMapLaporan(c *gin.Context) {
 		)
 	}
 
+	// Filter berdasarkan severity jika dikirim
+	if severity != "" && severity != "all" {
+		switch severity {
+		case "ringan", "sedang", "berat":
+			query = query.Where("laporan_kerusakan.severity = ?", severity)
+		case "belum_dinilai":
+			query = query.Where("laporan_kerusakan.severity = ? OR laporan_kerusakan.severity IS NULL OR laporan_kerusakan.severity = ''", "belum_dinilai")
+		}
+	}
+
 	var rawPoints []MapPoint
 
 	// Ambil data laporan
@@ -170,6 +196,9 @@ func GetMapLaporan(c *gin.Context) {
 	for _, p := range rawPoints {
 		if !utils.IsValidCoordinate(p.Latitude, p.Longitude) {
 			continue
+		}
+		if p.Severity == "" {
+			p.Severity = "belum_dinilai"
 		}
 		validPoints = append(validPoints, p)
 	}

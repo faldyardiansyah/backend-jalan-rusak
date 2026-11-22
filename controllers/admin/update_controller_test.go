@@ -658,3 +658,219 @@ func TestUpdateStatusLaporan_FileUploadSecurityAndScope(t *testing.T) {
 		}
 	})
 }
+
+func TestUpdateSeverityLaporan_ScopeAndValidation(t *testing.T) {
+	hasDB := ensureTestDB(t)
+	if !hasDB {
+		t.Skip("Database not available for integration test")
+	}
+
+	gin.SetMode(gin.TestMode)
+
+	now := time.Now().UnixNano()
+	wilayahA := models.Wilayah{
+		Nama: fmt.Sprintf("Desa Severity A %d", now),
+		Tipe: "desa",
+	}
+	wilayahB := models.Wilayah{
+		Nama: fmt.Sprintf("Desa Severity B %d", now),
+		Tipe: "desa",
+	}
+	config.DB.Create(&wilayahA)
+	config.DB.Create(&wilayahB)
+	defer config.DB.Unscoped().Delete(&wilayahA)
+	defer config.DB.Unscoped().Delete(&wilayahB)
+
+	adminPemdesA := models.User{
+		Name:      "Admin Pemdes A",
+		Email:     fmt.Sprintf("pemdesA_%d@roadis.local", now),
+		Role:      models.RoleAdminPemdes,
+		WilayahID: &wilayahA.ID,
+	}
+	adminPU := models.User{
+		Name:  "Admin PU Severity",
+		Email: fmt.Sprintf("pu_sev_%d@roadis.local", now),
+		Role:  models.RoleAdminPu,
+	}
+	superAdmin := models.User{
+		Name:  "Superadmin Severity",
+		Email: fmt.Sprintf("super_sev_%d@roadis.local", now),
+		Role:  models.RoleSuperAdmin,
+	}
+	wargaUser := models.User{
+		Name:  "Warga Severity",
+		Email: fmt.Sprintf("warga_sev_%d@roadis.local", now),
+		Role:  models.RoleWarga,
+	}
+	config.DB.Create(&adminPemdesA)
+	config.DB.Create(&adminPU)
+	config.DB.Create(&superAdmin)
+	config.DB.Create(&wargaUser)
+	defer config.DB.Unscoped().Delete(&adminPemdesA)
+	defer config.DB.Unscoped().Delete(&adminPU)
+	defer config.DB.Unscoped().Delete(&superAdmin)
+	defer config.DB.Unscoped().Delete(&wargaUser)
+
+	laporanDesaA := models.LaporanKerusakan{
+		UserID:        wargaUser.ID,
+		WilayahID:     wilayahA.ID,
+		Judul:         "Jalan Desa A Berlubang",
+		Deskripsi:     "Deskripsi",
+		Latitude:      -6.34,
+		Longitude:     108.33,
+		ImageURL:      "https://example.com/desaA.jpg",
+		TipeKerusakan: "pothole",
+		JenisJalan:    "desa",
+		Status:        "menunggu",
+		Severity:      "belum_dinilai",
+	}
+	laporanDesaB := models.LaporanKerusakan{
+		UserID:        wargaUser.ID,
+		WilayahID:     wilayahB.ID,
+		Judul:         "Jalan Desa B Berlubang",
+		Deskripsi:     "Deskripsi",
+		Latitude:      -6.35,
+		Longitude:     108.34,
+		ImageURL:      "https://example.com/desaB.jpg",
+		TipeKerusakan: "pothole",
+		JenisJalan:    "desa",
+		Status:        "menunggu",
+		Severity:      "belum_dinilai",
+	}
+	laporanKab := models.LaporanKerusakan{
+		UserID:        wargaUser.ID,
+		WilayahID:     wilayahA.ID,
+		Judul:         "Jalan Kabupaten Rusak",
+		Deskripsi:     "Deskripsi",
+		Latitude:      -6.36,
+		Longitude:     108.35,
+		ImageURL:      "https://example.com/kab.jpg",
+		TipeKerusakan: "rutting",
+		JenisJalan:    "kabupaten",
+		Status:        "menunggu",
+		Severity:      "belum_dinilai",
+	}
+	config.DB.Create(&laporanDesaA)
+	config.DB.Create(&laporanDesaB)
+	config.DB.Create(&laporanKab)
+	defer config.DB.Unscoped().Delete(&laporanDesaA)
+	defer config.DB.Unscoped().Delete(&laporanDesaB)
+	defer config.DB.Unscoped().Delete(&laporanKab)
+
+	desaAIDStr := strconv.FormatUint(uint64(laporanDesaA.ID), 10)
+	desaBIDStr := strconv.FormatUint(uint64(laporanDesaB.ID), 10)
+	kabIDStr := strconv.FormatUint(uint64(laporanKab.ID), 10)
+
+	callUpdateSeverity := func(laporanID string, userID uint, role string, severityPayload string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		bodyJSON := fmt.Sprintf(`{"severity": %q}`, severityPayload)
+		c.Request = httptest.NewRequest(http.MethodPut, "/api/admin/laporan/"+laporanID+"/severity", strings.NewReader(bodyJSON))
+		c.Request.Header.Set("Content-Type", "application/json")
+		c.Params = gin.Params{{Key: "id", Value: laporanID}}
+		if userID > 0 {
+			c.Set("user_id", userID)
+			c.Set("role", role)
+		}
+		UpdateSeverityLaporan(c)
+		return w
+	}
+
+	// 1. Invalid severity category -> 400 Bad Request
+	t.Run("Invalid severity category rejected with 400", func(t *testing.T) {
+		w := callUpdateSeverity(desaAIDStr, adminPemdesA.ID, string(models.RoleAdminPemdes), "parah_sekali")
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	// 2. Invalid ID -> 400 Bad Request
+	t.Run("Invalid report ID rejected with 400", func(t *testing.T) {
+		w := callUpdateSeverity("abc", adminPemdesA.ID, string(models.RoleAdminPemdes), "berat")
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	// 3. Report not found -> 404 Not Found
+	t.Run("Non-existent report returns 404", func(t *testing.T) {
+		w := callUpdateSeverity("999999", adminPemdesA.ID, string(models.RoleAdminPemdes), "berat")
+		if w.Code != http.StatusNotFound {
+			t.Errorf("expected 404, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	// 4. Admin Pemdes assessing own desa report -> 200 OK and persistent in DB
+	t.Run("Admin Pemdes can assess own desa report", func(t *testing.T) {
+		w := callUpdateSeverity(desaAIDStr, adminPemdesA.ID, string(models.RoleAdminPemdes), "berat")
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var check models.LaporanKerusakan
+		config.DB.First(&check, laporanDesaA.ID)
+		if check.Severity != "berat" {
+			t.Errorf("expected severity in DB to be 'berat', got %q", check.Severity)
+		}
+	})
+
+	// 5. Admin Pemdes assessing other desa report -> 403 Forbidden
+	t.Run("Admin Pemdes forbidden on other desa report", func(t *testing.T) {
+		w := callUpdateSeverity(desaBIDStr, adminPemdesA.ID, string(models.RoleAdminPemdes), "ringan")
+		if w.Code != http.StatusForbidden {
+			t.Errorf("expected 403 Forbidden, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	// 6. Admin Pemdes assessing kabupaten report -> 403 Forbidden
+	t.Run("Admin Pemdes forbidden on kabupaten report", func(t *testing.T) {
+		w := callUpdateSeverity(kabIDStr, adminPemdesA.ID, string(models.RoleAdminPemdes), "sedang")
+		if w.Code != http.StatusForbidden {
+			t.Errorf("expected 403 Forbidden, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	// 7. Admin PU assessing kabupaten report -> 200 OK and persistent in DB
+	t.Run("Admin PU can assess kabupaten report", func(t *testing.T) {
+		w := callUpdateSeverity(kabIDStr, adminPU.ID, string(models.RoleAdminPu), "sedang")
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var check models.LaporanKerusakan
+		config.DB.First(&check, laporanKab.ID)
+		if check.Severity != "sedang" {
+			t.Errorf("expected severity in DB to be 'sedang', got %q", check.Severity)
+		}
+	})
+
+	// 8. Admin PU assessing desa report -> 403 Forbidden
+	t.Run("Admin PU forbidden on desa report", func(t *testing.T) {
+		w := callUpdateSeverity(desaAIDStr, adminPU.ID, string(models.RoleAdminPu), "ringan")
+		if w.Code != http.StatusForbidden {
+			t.Errorf("expected 403 Forbidden, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	// 9. Superadmin can assess any report -> 200 OK
+	t.Run("Superadmin can assess any report", func(t *testing.T) {
+		w := callUpdateSeverity(desaBIDStr, superAdmin.ID, string(models.RoleSuperAdmin), "ringan")
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var check models.LaporanKerusakan
+		config.DB.First(&check, laporanDesaB.ID)
+		if check.Severity != "ringan" {
+			t.Errorf("expected severity in DB to be 'ringan', got %q", check.Severity)
+		}
+	})
+
+	// 10. Warga cannot assess severity -> 403 Forbidden
+	t.Run("Warga forbidden from updating severity", func(t *testing.T) {
+		w := callUpdateSeverity(desaAIDStr, wargaUser.ID, string(models.RoleWarga), "ringan")
+		if w.Code != http.StatusForbidden {
+			t.Errorf("expected 403 Forbidden for warga, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+}

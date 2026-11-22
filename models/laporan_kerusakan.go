@@ -17,8 +17,11 @@ type LaporanKerusakan struct {
 	Longitude     float64 `json:"longitude" gorm:"not null"`
 	ImageURL      string  `json:"image_url" gorm:"type:text;not null"`
 	TipeKerusakan string  `json:"tipe_kerusakan" gorm:"type:varchar(150);not null"`
-	Status        string  `json:"status" gorm:"type:varchar(50);default:'menunggu';not null"`
-	DitugaskanKe  string  `json:"ditugaskan_ke" gorm:"type:varchar(150)"`
+	Status        string   `json:"status" gorm:"type:varchar(50);default:'menunggu';not null"`
+	Severity      string   `json:"severity" gorm:"type:varchar(50);default:'belum_dinilai'"`
+	AIModel       string   `json:"ai_model" gorm:"type:varchar(100)"`
+	AIConfidence  *float64 `json:"ai_confidence" gorm:"type:decimal(5,4)"`
+	DitugaskanKe  string   `json:"ditugaskan_ke" gorm:"type:varchar(150)"`
 	FotoBukti     string  `json:"foto_bukti" gorm:"type:text"`
 	CatatanAdmin  string  `json:"catatan_admin" gorm:"type:text"` // fix typo lama "catataSn_admin"
 }

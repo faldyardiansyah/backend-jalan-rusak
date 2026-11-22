@@ -249,13 +249,14 @@ func TestAdminMapResponseContract_JSONFormat(t *testing.T) {
 		t.Errorf(`expected JSON to contain '"status":"success"', got: %s`, str)
 	}
 
-	// Pastikan field MapPoint tidak memiliki field AI palsu
+	// Pastikan field MapPoint memiliki severity yang konsisten dan tidak memiliki field AI fiktif
 	samplePoint := MapPoint{
 		ID:            1,
 		Judul:         "Jalan Berlubang",
 		Latitude:      -6.3265,
 		Longitude:     108.3241,
 		Status:        "menunggu",
+		Severity:      "belum_dinilai",
 		TipeKerusakan: "lubang",
 		JenisJalan:    "kabupaten",
 		ImageURL:      "http://example.com/img.jpg",
@@ -271,11 +272,33 @@ func TestAdminMapResponseContract_JSONFormat(t *testing.T) {
 	}
 	pStr := string(pb)
 
-	// Pastikan tidak ada field AI fiktif
-	forbiddenFields := []string{"severity", "severity_score", "confidence", "priority", "model_version"}
+	if !strings.Contains(pStr, `"severity":"belum_dinilai"`) {
+		t.Errorf(`expected JSON to contain '"severity":"belum_dinilai"', got: %s`, pStr)
+	}
+
+	// Pastikan tidak ada field AI fiktif (severity_score, confidence, priority, model_version)
+	forbiddenFields := []string{"severity_score", "confidence", "priority", "model_version"}
 	for _, field := range forbiddenFields {
 		if strings.Contains(pStr, `"`+field+`"`) {
 			t.Errorf("found forbidden AI field %q in MapPoint JSON: %s", field, pStr)
 		}
+	}
+}
+
+func TestGetMapLaporan_InvalidSeverity(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/map/laporan?severity=invalid_severity", nil)
+	c.Request = req
+	c.Set("role", "admin_pu")
+	c.Set("user_id", uint(1))
+
+	GetMapLaporan(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400 for invalid severity, got %d. Body: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "Parameter severity tidak valid") {
+		t.Fatalf("expected body to contain error message, got: %s", w.Body.String())
 	}
 }

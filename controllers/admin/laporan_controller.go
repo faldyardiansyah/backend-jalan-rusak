@@ -2,8 +2,9 @@ package admin
 
 import (
 	"net/http"
-	"strings"
 	"strconv"
+	"strings"
+	"time"
 
 	"backend-jalan-rusak/config"
 	"backend-jalan-rusak/models"
@@ -47,9 +48,13 @@ func GetAllLaporan(c *gin.Context) {
 		return
 	}
 
-	statusFilter := c.Query("status")
-	searchKeyword := c.Query("search")
-	jenisJalanFilter := c.Query("jenis_jalan")
+	statusFilter := strings.TrimSpace(c.Query("status"))
+	severityFilter := strings.ToLower(strings.TrimSpace(c.Query("severity")))
+	searchKeyword := strings.TrimSpace(c.Query("search"))
+	jenisJalanFilter := strings.TrimSpace(c.Query("jenis_jalan"))
+	startDateStr := strings.TrimSpace(c.Query("start_date"))
+	endDateStr := strings.TrimSpace(c.Query("end_date"))
+	sortByParam := strings.ToLower(strings.TrimSpace(c.Query("sort_by")))
 	pageStr := c.DefaultQuery("page", "1")
 	limitStr := c.DefaultQuery("limit", "10")
 
@@ -65,6 +70,73 @@ func GetAllLaporan(c *gin.Context) {
 		limit = 100
 	}
 	offset := (page - 1) * limit
+
+	// Validasi filter tanggal jika diberikan
+	const dateLayout = "2006-01-02"
+	var startDate, endDate time.Time
+	var hasStartDate, hasEndDate bool
+
+	if startDateStr != "" {
+		parsedStart, err := time.ParseInLocation(dateLayout, startDateStr, time.Local)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  "error",
+				"message": "Format start_date tidak valid. Gunakan format YYYY-MM-DD",
+			})
+			return
+		}
+		startDate = parsedStart
+		hasStartDate = true
+	}
+
+	if endDateStr != "" {
+		parsedEnd, err := time.ParseInLocation(dateLayout, endDateStr, time.Local)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  "error",
+				"message": "Format end_date tidak valid. Gunakan format YYYY-MM-DD",
+			})
+			return
+		}
+		endDate = parsedEnd
+		hasEndDate = true
+	}
+
+	if hasStartDate && hasEndDate && startDate.After(endDate) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "start_date tidak boleh melebihi end_date",
+		})
+		return
+	}
+
+	// Validasi dan penentuan klausul sorting deterministik
+	var orderClause string
+	switch sortByParam {
+	case "", "newest":
+		orderClause = "laporan_kerusakan.created_at DESC, laporan_kerusakan.id DESC"
+	case "oldest":
+		orderClause = "laporan_kerusakan.created_at ASC, laporan_kerusakan.id ASC"
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "Parameter sort_by tidak valid. Gunakan 'newest' atau 'oldest'",
+		})
+		return
+	}
+
+	if severityFilter != "" && severityFilter != "all" {
+		switch severityFilter {
+		case "ringan", "sedang", "berat", "belum_dinilai":
+			// valid
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  "error",
+				"message": "Parameter severity tidak valid. Gunakan 'ringan', 'sedang', 'berat', atau 'belum_dinilai'",
+			})
+			return
+		}
+	}
 
 	if config.DB == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -121,8 +193,17 @@ func GetAllLaporan(c *gin.Context) {
 		return
 	}
 
-	if statusFilter != "" {
+	if statusFilter != "" && strings.ToLower(statusFilter) != "all" {
 		query = query.Where("laporan_kerusakan.status = ?", statusFilter)
+	}
+
+	if severityFilter != "" && severityFilter != "all" {
+		switch severityFilter {
+		case "ringan", "sedang", "berat":
+			query = query.Where("laporan_kerusakan.severity = ?", severityFilter)
+		case "belum_dinilai":
+			query = query.Where("laporan_kerusakan.severity = ? OR laporan_kerusakan.severity IS NULL OR laporan_kerusakan.severity = ''", "belum_dinilai")
+		}
 	}
 
 	if searchKeyword != "" {
@@ -130,9 +211,19 @@ func GetAllLaporan(c *gin.Context) {
 		query = query.Where("laporan_kerusakan.judul LIKE ? OR laporan_kerusakan.deskripsi LIKE ? OR user.name LIKE ?", likePattern, likePattern, likePattern)
 	}
 
+	if hasStartDate {
+		query = query.Where("laporan_kerusakan.created_at >= ?", startDate)
+	}
+
+	if hasEndDate {
+		// Menjangkau keseluruhan tanggal akhir secara inklusif (hingga akhir hari)
+		endOfDayExclusive := endDate.AddDate(0, 0, 1)
+		query = query.Where("laporan_kerusakan.created_at < ?", endOfDayExclusive)
+	}
+
 	query.Count(&totalData)
 
-	err := query.Order("laporan_kerusakan.created_at DESC").
+	err := query.Order(orderClause).
 		Limit(limit).
 		Offset(offset).
 		Find(&listLaporan).Error
@@ -144,6 +235,12 @@ func GetAllLaporan(c *gin.Context) {
 			"error":   "Gagal mengambil laporan kerusakan",
 		})
 		return
+	}
+
+	for i := range listLaporan {
+		if listLaporan[i].Severity == "" {
+			listLaporan[i].Severity = "belum_dinilai"
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -250,6 +347,10 @@ func GetLaporanByID(c *gin.Context) {
 			"message": "Laporan tidak ditemukan",
 		})
 		return
+	}
+
+	if laporan.Severity == "" {
+		laporan.Severity = "belum_dinilai"
 	}
 
 	c.JSON(http.StatusOK, gin.H{
