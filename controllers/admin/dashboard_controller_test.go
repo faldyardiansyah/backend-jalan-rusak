@@ -305,3 +305,96 @@ func TestDashboardResponseContract_JSONFormat(t *testing.T) {
 		}
 	}
 }
+
+func TestHitungTrenBulanan_PergantianTahun(t *testing.T) {
+	// Simulasi tanggal acuan: 15 Januari 2027
+	// Trailing 6 bulan harus: Agu 2026, Sep 2026, Okt 2026, Nov 2026, Des 2026, Jan 2027
+	now := time.Date(2027, 1, 15, 10, 0, 0, 0, time.UTC)
+
+	createdTimes := []time.Time{
+		time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC),  // Agu
+		time.Date(2026, 12, 25, 0, 0, 0, 0, time.UTC), // Des
+		time.Date(2026, 12, 31, 23, 59, 0, 0, time.UTC), // Des
+		time.Date(2027, 1, 5, 0, 0, 0, 0, time.UTC),   // Jan
+	}
+
+	tren := HitungTrenBulanan(createdTimes, now)
+
+	if len(tren) != 6 {
+		t.Fatalf("expected 6 months, got %d", len(tren))
+	}
+
+	expectedNames := []string{"Agu", "Sep", "Okt", "Nov", "Des", "Jan"}
+	expectedYears := []int{2026, 2026, 2026, 2026, 2026, 2027}
+	expectedCounts := []int64{1, 0, 0, 0, 2, 1}
+
+	for i := 0; i < 6; i++ {
+		if tren[i].Name != expectedNames[i] {
+			t.Errorf("bucket %d: expected name %s, got %s", i, expectedNames[i], tren[i].Name)
+		}
+		if tren[i].Year != expectedYears[i] {
+			t.Errorf("bucket %d: expected year %d, got %d", i, expectedYears[i], tren[i].Year)
+		}
+		if tren[i].Count != expectedCounts[i] {
+			t.Errorf("bucket %d (%s %d): expected count %d, got %d", i, tren[i].Name, tren[i].Year, expectedCounts[i], tren[i].Count)
+		}
+		if i == 5 && !tren[i].IsCurrent {
+			t.Errorf("expected last bucket (Jan 2027) to be current, got false")
+		}
+		if i < 5 && tren[i].IsCurrent {
+			t.Errorf("expected bucket %d to not be current, got true", i)
+		}
+	}
+}
+
+func TestHitungTrenMingguan_NonOverlapping(t *testing.T) {
+	now := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+
+	// Laporan tepat di batas window 7 hari tidak boleh dihitung dobel
+	tBoundary := now.Add(-7 * 24 * time.Hour) // tepat di batas antara Mg -1 dan Mg Ini
+
+	createdTimes := []time.Time{
+		tBoundary,
+		now, // tepat di waktu sekarang
+	}
+
+	tren := HitungTrenMingguan(createdTimes, now)
+
+	if len(tren) != 6 {
+		t.Fatalf("expected 6 weeks, got %d", len(tren))
+	}
+
+	// Total laporan yang dihitung harus tepat 2 (tidak boleh ada double counting atau missing)
+	var totalDihitung int64
+	for _, item := range tren {
+		totalDihitung += item.Count
+	}
+
+	if totalDihitung != 2 {
+		t.Errorf("expected exactly 2 reports counted across all weeks, got %d", totalDihitung)
+	}
+}
+
+func TestHitungTren_Diatas10Laporan(t *testing.T) {
+	// Memastikan dataset > 10 laporan tidak terpotong pagination
+	now := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+
+	// Buat 25 laporan tersebar
+	createdTimes := make([]time.Time, 0, 25)
+	for i := 0; i < 25; i++ {
+		// Setiap laporan berjarak 3 hari ke belakang
+		createdTimes = append(createdTimes, now.Add(-time.Duration(i*3)*24*time.Hour))
+	}
+
+	tren := HitungTrenBulanan(createdTimes, now)
+
+	var totalCounted int64
+	for _, m := range tren {
+		totalCounted += m.Count
+	}
+
+	// 25 laporan dalam rentang 75 hari (~2.5 bulan) harus SELURUHNYA terhitung dalam 6 bulan terakhir
+	if totalCounted != 25 {
+		t.Errorf("expected all 25 reports counted without pagination limit, got %d", totalCounted)
+	}
+}

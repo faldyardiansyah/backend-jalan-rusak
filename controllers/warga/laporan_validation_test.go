@@ -360,6 +360,12 @@ func TestCreateLaporan_FileValidation(t *testing.T) {
 			t.Skip("No test user in DB")
 		}
 
+		var testWilayah models.Wilayah
+		targetWilayahID := baseFields["wilayah_id"]
+		if err := config.DB.Where("deleted_at IS NULL").First(&testWilayah).Error; err == nil {
+			targetWilayahID = strconv.FormatUint(uint64(testWilayah.ID), 10)
+		}
+
 		uniqueJudul := fmt.Sprintf("Test File Validation %d", time.Now().UnixNano())
 		testFields := map[string]string{
 			"latitude":       baseFields["latitude"],
@@ -367,7 +373,7 @@ func TestCreateLaporan_FileValidation(t *testing.T) {
 			"judul":          uniqueJudul,
 			"deskripsi":      baseFields["deskripsi"],
 			"tipe_kerusakan": baseFields["tipe_kerusakan"],
-			"wilayah_id":     baseFields["wilayah_id"],
+			"wilayah_id":     targetWilayahID,
 		}
 
 		var createdID uint

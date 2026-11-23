@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"backend-jalan-rusak/config"
 	"backend-jalan-rusak/models"
@@ -266,8 +267,22 @@ func UpdateStatusLaporan(c *gin.Context) {
 		laporan.FotoBukti = newFotoBukti
 	}
 
-	// Simpan perubahan ke database
-	if err := config.DB.Save(&laporan).Error; err != nil {
+	// Simpan perubahan ke database dalam transaksi atomik
+	tx := config.DB.Begin()
+	if tx.Error != nil {
+		if newFotoBukti != "" {
+			_ = BuktiDeleter(newFotoBukti)
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Gagal memulai transaksi database",
+			"error":   tx.Error.Error(),
+		})
+		return
+	}
+
+	if err := tx.Save(&laporan).Error; err != nil {
+		tx.Rollback()
 		if newFotoBukti != "" {
 			_ = BuktiDeleter(newFotoBukti)
 		}
@@ -279,7 +294,58 @@ func UpdateStatusLaporan(c *gin.Context) {
 		return
 	}
 
-	// Hapus foto bukti lama hanya jika database save berhasil
+	// Catat riwayat perubahan status HANYA ketika status benar-benar berubah
+	if statusChanged {
+		if !tx.Migrator().HasTable(&models.RiwayatStatusLaporan{}) {
+			tx.Rollback()
+			if newFotoBukti != "" {
+				_ = BuktiDeleter(newFotoBukti)
+			}
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"status":  "error",
+				"message": "Tabel riwayat status belum tersedia di sistem. Perubahan status dibatalkan untuk menjaga integritas audit trail.",
+				"error":   "Tabel riwayat_status_laporan belum tersedia",
+			})
+			return
+		}
+
+		riwayat := models.RiwayatStatusLaporan{
+			LaporanID:  laporan.ID,
+			StatusLama: oldStatus,
+			StatusBaru: laporan.Status,
+			UserID:     &userID,
+			Role:       string(role),
+			Catatan:    catatanAdmin,
+			CreatedAt:  time.Now(),
+		}
+		if err := tx.Create(&riwayat).Error; err != nil {
+			tx.Rollback()
+			if newFotoBukti != "" {
+				_ = BuktiDeleter(newFotoBukti)
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status":  "error",
+				"message": "Gagal mencatat riwayat perubahan status",
+				"error":   err.Error(),
+			})
+			return
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		tx.Rollback()
+		if newFotoBukti != "" {
+			_ = BuktiDeleter(newFotoBukti)
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Gagal menyelesaikan transaksi database",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	// Hapus foto bukti lama hanya jika database save & commit berhasil
 	if newFotoBukti != "" && oldFotoBukti != "" {
 		_ = BuktiDeleter(oldFotoBukti)
 	}

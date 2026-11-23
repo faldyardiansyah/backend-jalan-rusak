@@ -53,31 +53,43 @@ func ConnectDatabase(){
 		sqlDB.SetConnMaxLifetime(time.Hour)
 	}
 
-	// ini buat ngelakuin migrasi otomatis setiap modelnya
-	err = DB.AutoMigrate(
-		&models.User{},
-		&models.LaporanKerusakan{},
-		&models.RiwayatChat{},
-		&models.Wilayah{},
-		&models.Notifikasi{},
-		&models.UserPreference{},
-	)
-
-	if err != nil {
-		log.Fatalf("Gagal melakukan migrasi ke database: %v", err)
+	// Konfigurasi AutoMigrate opt-in untuk keamanan database development dan production
+	if os.Getenv("APP_ENV") == "production" {
+		log.Println("Database: Mode production terdeteksi, AutoMigrate dinonaktifkan demi integritas skema (fail-closed)")
+	} else if os.Getenv("AUTO_MIGRATE") == "true" {
+		log.Println("Database: Menjalankan AutoMigrate secara eksplisit (AUTO_MIGRATE=true)...")
+		err = DB.AutoMigrate(
+			&models.User{},
+			&models.LaporanKerusakan{},
+			&models.RiwayatChat{},
+			&models.Wilayah{},
+			&models.Notifikasi{},
+			&models.UserPreference{},
+			&models.RiwayatStatusLaporan{},
+		)
+		if err != nil {
+			log.Fatalf("Gagal melakukan migrasi ke database: %v", err)
+		}
+		log.Println("Database: AutoMigrate selesai secara sukses")
+	} else {
+		log.Println("Database: AutoMigrate dinonaktifkan (default aman opt-in). Set AUTO_MIGRATE=true jika ingin menjalankan migrasi skema.")
 	}
 
-	if os.Getenv("APP_ENV") == "production" || os.Getenv("SEED_DEV_DATA") == "false" {
-		log.Println("Database: Mode production / SEED_DEV_DATA=false, melewati eksekusi seluruh seeder otomatis")
-	} else {
+	// Konfigurasi Seeder opt-in: dilarang di production, hanya jalan jika eksplisit SEED_DEV_DATA=true
+	if os.Getenv("APP_ENV") == "production" {
+		log.Println("Database: Mode production terdeteksi, seeder dilarang keras dan dilewati")
+	} else if os.Getenv("SEED_DEV_DATA") == "true" {
+		log.Println("Database: Menjalankan seeder development secara eksplisit (SEED_DEV_DATA=true)...")
 		seeders.SeedWilayah(DB)
 		seeders.SeedUser(DB)
 		seeders.SeedLaporan(DB)
 		seeders.SeedChat(DB)
 		log.Println("Database: Seluruh data seeder development berhasil dijalankan")
+	} else {
+		log.Println("Database: Seeder development dinonaktifkan (default aman opt-in). Set SEED_DEV_DATA=true jika ingin mengisi data dummy.")
 	}
 
-	log.Println("Berhasil terhubung ke database MySQL & migrasinya sukses")
+	log.Println("Berhasil terhubung ke database MySQL")
 }
 
 func InitCloudinary(){
@@ -182,6 +194,7 @@ func EnsureTestDB() (*gorm.DB, error) {
 		&models.Wilayah{},
 		&models.Notifikasi{},
 		&models.UserPreference{},
+		&models.RiwayatStatusLaporan{},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to auto-migrate test database '%s': %w", testDB, err)

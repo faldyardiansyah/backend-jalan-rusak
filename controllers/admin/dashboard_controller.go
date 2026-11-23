@@ -1,7 +1,9 @@
 package admin
 
 import (
+	"fmt"
 	"net/http"
+	"time"
 
 	"backend-jalan-rusak/config"
 	"backend-jalan-rusak/models"
@@ -9,6 +11,113 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
+
+type TrenItem struct {
+	Name      string `json:"name"`
+	Count     int64  `json:"count"`
+	Month     int    `json:"month,omitempty"`
+	Year      int    `json:"year,omitempty"`
+	IsCurrent bool   `json:"is_current"`
+}
+
+// HitungTrenBulanan menghitung agregasi laporan per bulan untuk trailing 6 bulan berakhir pada bulan berjalan
+func HitungTrenBulanan(createdTimes []time.Time, now time.Time) []TrenItem {
+	currentYear := now.Year()
+	currentMonth := now.Month()
+
+	monthNames := []string{"", "Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"}
+
+	type bucketDef struct {
+		start time.Time
+		end   time.Time
+		name  string
+		month int
+		year  int
+		isCur bool
+	}
+
+	buckets := make([]bucketDef, 6)
+	for i := 0; i < 6; i++ {
+		start := time.Date(currentYear, currentMonth-time.Month(5-i), 1, 0, 0, 0, 0, now.Location())
+		end := time.Date(currentYear, currentMonth-time.Month(4-i), 1, 0, 0, 0, 0, now.Location())
+		buckets[i] = bucketDef{
+			start: start,
+			end:   end,
+			name:  monthNames[start.Month()],
+			month: int(start.Month()),
+			year:  start.Year(),
+			isCur: i == 5,
+		}
+	}
+
+	result := make([]TrenItem, 6)
+	for i, b := range buckets {
+		var cnt int64
+		for _, t := range createdTimes {
+			if (t.Equal(b.start) || t.After(b.start)) && t.Before(b.end) {
+				cnt++
+			}
+		}
+		result[i] = TrenItem{
+			Name:      b.name,
+			Count:     cnt,
+			Month:     b.month,
+			Year:      b.year,
+			IsCurrent: b.isCur,
+		}
+	}
+
+	return result
+}
+
+// HitungTrenMingguan menghitung agregasi laporan per jendela 7 hari untuk 6 minggu terakhir
+func HitungTrenMingguan(createdTimes []time.Time, now time.Time) []TrenItem {
+	type weekBucketDef struct {
+		start time.Time
+		end   time.Time
+		name  string
+		isCur bool
+	}
+
+	buckets := make([]weekBucketDef, 6)
+	for i := 0; i < 6; i++ {
+		start := now.Add(-time.Duration(6-i) * 7 * 24 * time.Hour)
+		end := now.Add(-time.Duration(5-i) * 7 * 24 * time.Hour)
+		name := fmt.Sprintf("Mg -%d", 5-i)
+		if i == 5 {
+			name = "Mg Ini"
+		}
+		buckets[i] = weekBucketDef{
+			start: start,
+			end:   end,
+			name:  name,
+			isCur: i == 5,
+		}
+	}
+
+	result := make([]TrenItem, 6)
+	for i, b := range buckets {
+		var cnt int64
+		for _, t := range createdTimes {
+			isMatch := false
+			if i == len(buckets)-1 {
+				isMatch = (t.Equal(b.start) || t.After(b.start)) && (t.Before(b.end) || t.Equal(b.end))
+			} else {
+				isMatch = (t.Equal(b.start) || t.After(b.start)) && t.Before(b.end)
+			}
+			if isMatch {
+				cnt++
+			}
+		}
+		result[i] = TrenItem{
+			Name:      b.name,
+			Count:     cnt,
+			IsCurrent: b.isCur,
+		}
+	}
+
+	return result
+}
 
 func GetDashboardStats(c *gin.Context) {
 	roleVal, existsRole := c.Get("role")
@@ -153,6 +262,17 @@ func GetDashboardStats(c *gin.Context) {
 		return
 	}
 
+	now := time.Now()
+	sixMonthsAgoStart := time.Date(now.Year(), now.Month()-5, 1, 0, 0, 0, 0, now.Location())
+
+	var createdTimes []time.Time
+	_ = baseQuery.Session(&gorm.Session{}).
+		Where("laporan_kerusakan.created_at >= ?", sixMonthsAgoStart).
+		Pluck("laporan_kerusakan.created_at", &createdTimes)
+
+	trenBulanan := HitungTrenBulanan(createdTimes, now)
+	trenMingguan := HitungTrenMingguan(createdTimes, now)
+
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
 		"message": "Dashboard stats berhasil diambil",
@@ -162,6 +282,8 @@ func GetDashboardStats(c *gin.Context) {
 			"total_proses":   totalProses,
 			"total_selesai":  totalSelesai,
 			"total_ditolak":  totalDitolak,
+			"tren_bulanan":   trenBulanan,
+			"tren_mingguan":  trenMingguan,
 		},
 	})
 }

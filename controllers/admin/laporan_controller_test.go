@@ -1,12 +1,15 @@
 package admin
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"backend-jalan-rusak/config"
 	"backend-jalan-rusak/models"
 
 	"github.com/gin-gonic/gin"
@@ -221,6 +224,24 @@ func TestGetAllLaporan_ParameterValidation(t *testing.T) {
 			expectedCode:   http.StatusBadRequest,
 			expectedErrMsg: "Parameter severity tidak valid",
 		},
+		{
+			name:           "Invalid status parameter",
+			queryString:    "?status=unregistered_status",
+			expectedCode:   http.StatusBadRequest,
+			expectedErrMsg: "Parameter status tidak valid",
+		},
+		{
+			name:           "Invalid jenis_jalan parameter",
+			queryString:    "?jenis_jalan=tol_layang",
+			expectedCode:   http.StatusBadRequest,
+			expectedErrMsg: "Parameter jenis_jalan tidak valid",
+		},
+		{
+			name:           "Invalid wilayah_id parameter",
+			queryString:    "?wilayah_id=abc_not_a_number",
+			expectedCode:   http.StatusBadRequest,
+			expectedErrMsg: "Parameter wilayah_id tidak valid",
+		},
 	}
 
 	for _, tc := range tests {
@@ -319,4 +340,292 @@ func TestDateFilterInclusiveEndOfDay(t *testing.T) {
 	if lapNextDay.Before(endOfDayExclusive) {
 		t.Fatalf("report on next day should not be before exclusive next day mark")
 	}
+}
+
+func TestGetAllLaporan_LiveDatabaseQuery(t *testing.T) {
+	if !ensureTestDB(t) {
+		return
+	}
+	gin.SetMode(gin.TestMode)
+
+	// Persiapkan wilayah dan user pengujian di db_jalan_rusak_test
+	nowNano := time.Now().UnixNano()
+	wilayahA := models.Wilayah{Nama: fmt.Sprintf("Desa Filter A %d", nowNano), Tipe: "desa"}
+	wilayahB := models.Wilayah{Nama: fmt.Sprintf("Desa Filter B %d", nowNano), Tipe: "desa"}
+	config.DB.Create(&wilayahA)
+	config.DB.Create(&wilayahB)
+
+	adminPemdes := models.User{
+		Name:      "Admin Pemdes Filter Test",
+		Email:     fmt.Sprintf("pemdes_filter_%d@example.com", nowNano),
+		Password:  "password123",
+		Role:      models.RoleAdminPemdes,
+		WilayahID: &wilayahA.ID,
+	}
+	adminPU := models.User{
+		Name:     "Admin PU Filter Test",
+		Email:    fmt.Sprintf("pu_filter_%d@example.com", nowNano),
+		Password: "password123",
+		Role:     models.RoleAdminPu,
+	}
+	superAdmin := models.User{
+		Name:     "Super Admin Filter Test",
+		Email:    fmt.Sprintf("super_filter_%d@example.com", nowNano),
+		Password: "password123",
+		Role:     models.RoleSuperAdmin,
+	}
+	wargaUser := models.User{
+		Name:     "Warga Filter Test",
+		Email:    fmt.Sprintf("warga_filter_%d@example.com", nowNano),
+		Password: "password123",
+		Role:     models.RoleWarga,
+	}
+	config.DB.Create(&adminPemdes)
+	config.DB.Create(&adminPU)
+	config.DB.Create(&superAdmin)
+	config.DB.Create(&wargaUser)
+
+	baseTime := time.Now().Truncate(time.Hour)
+
+	// Buat 4 laporan dengan kombinasi atribut untuk pengujian live
+	lap1 := models.LaporanKerusakan{
+		UserID:        wargaUser.ID,
+		WilayahID:     wilayahA.ID,
+		JenisJalan:    "desa",
+		Judul:         fmt.Sprintf("Lubang Jalan Desa A %d", nowNano),
+		Deskripsi:     "Deskripsi lubang dalam",
+		Latitude:      -6.31,
+		Longitude:     108.31,
+		ImageURL:      "https://example.com/1.jpg",
+		TipeKerusakan: "Lubang",
+		Status:        "menunggu",
+		Severity:      "ringan",
+	}
+	lap1.CreatedAt = baseTime.Add(-3 * 24 * time.Hour) // 3 hari lalu
+	config.DB.Create(&lap1)
+
+	lap2 := models.LaporanKerusakan{
+		UserID:        wargaUser.ID,
+		WilayahID:     wilayahA.ID,
+		JenisJalan:    "desa",
+		Judul:         fmt.Sprintf("Retak Jalan Desa A %d", nowNano),
+		Deskripsi:     "Deskripsi retak rambut",
+		Latitude:      -6.32,
+		Longitude:     108.32,
+		ImageURL:      "https://example.com/2.jpg",
+		TipeKerusakan: "Retak",
+		Status:        "proses",
+		Severity:      "sedang",
+	}
+	lap2.CreatedAt = baseTime.Add(-2 * 24 * time.Hour) // 2 hari lalu
+	config.DB.Create(&lap2)
+
+	lap3 := models.LaporanKerusakan{
+		UserID:        wargaUser.ID,
+		WilayahID:     wilayahB.ID,
+		JenisJalan:    "desa",
+		Judul:         fmt.Sprintf("Amblas Jalan Desa B %d", nowNano),
+		Deskripsi:     "Deskripsi jalan amblas parah",
+		Latitude:      -6.33,
+		Longitude:     108.33,
+		ImageURL:      "https://example.com/3.jpg",
+		TipeKerusakan: "Amblas",
+		Status:        "menunggu",
+		Severity:      "berat",
+	}
+	lap3.CreatedAt = baseTime.Add(-1 * 24 * time.Hour) // 1 hari lalu
+	config.DB.Create(&lap3)
+
+	lap4 := models.LaporanKerusakan{
+		UserID:        wargaUser.ID,
+		WilayahID:     wilayahB.ID,
+		JenisJalan:    "kabupaten",
+		Judul:         fmt.Sprintf("Jalan Kabupaten Bergelombang %d", nowNano),
+		Deskripsi:     "Deskripsi jalan kabupaten",
+		Latitude:      -6.34,
+		Longitude:     108.34,
+		ImageURL:      "https://example.com/4.jpg",
+		TipeKerusakan: "Bergelombang",
+		Status:        "selesai",
+		Severity:      "", // Belum dinilai / kosong
+	}
+	lap4.CreatedAt = baseTime // hari ini
+	config.DB.Create(&lap4)
+
+	// Helper untuk memanggil GetAllLaporan via Gin TestContext
+	callAPI := func(role string, userID uint, queryStr string) (*httptest.ResponseRecorder, struct {
+		Status string                   `json:"status"`
+		Data   []models.LaporanKerusakan `json:"data"`
+		Total  int64                    `json:"total"`
+	}) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		req := httptest.NewRequest(http.MethodGet, "/api/admin/laporan"+queryStr, nil)
+		c.Request = req
+		c.Set("role", role)
+		c.Set("user_id", userID)
+
+		GetAllLaporan(c)
+
+		var resp struct {
+			Status string                   `json:"status"`
+			Data   []models.LaporanKerusakan `json:"data"`
+			Total  int64                    `json:"total"`
+		}
+		if w.Code == http.StatusOK {
+			_ = json.Unmarshal(w.Body.Bytes(), &resp)
+		}
+		return w, resp
+	}
+
+	t.Run("1. Filter Status (menunggu vs proses)", func(t *testing.T) {
+		w, resp := callAPI("super_admin", superAdmin.ID, "?status=menunggu")
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		for _, item := range resp.Data {
+			if item.Status != "menunggu" {
+				t.Errorf("expected status 'menunggu', got '%s'", item.Status)
+			}
+		}
+	})
+
+	t.Run("2. Filter Severity (sedang vs belum_dinilai)", func(t *testing.T) {
+		_, respSedang := callAPI("super_admin", superAdmin.ID, "?severity=sedang")
+		for _, item := range respSedang.Data {
+			if item.Severity != "sedang" {
+				t.Errorf("expected severity 'sedang', got '%s'", item.Severity)
+			}
+		}
+
+		_, respBelum := callAPI("super_admin", superAdmin.ID, "?severity=belum_dinilai")
+		for _, item := range respBelum.Data {
+			if item.Severity != "belum_dinilai" && item.Severity != "" {
+				t.Errorf("expected severity 'belum_dinilai', got '%s'", item.Severity)
+			}
+		}
+	})
+
+	t.Run("3. Filter Jenis Jalan (kabupaten vs desa)", func(t *testing.T) {
+		_, respKab := callAPI("admin_pu", adminPU.ID, "?jenis_jalan=kabupaten")
+		for _, item := range respKab.Data {
+			if item.JenisJalan != "kabupaten" {
+				t.Errorf("expected jenis_jalan 'kabupaten', got '%s'", item.JenisJalan)
+			}
+		}
+	})
+
+	t.Run("4. Filter Wilayah (wilayah_id)", func(t *testing.T) {
+		q := fmt.Sprintf("?wilayah_id=%d", wilayahA.ID)
+		_, respWilA := callAPI("super_admin", superAdmin.ID, q)
+		for _, item := range respWilA.Data {
+			if item.WilayahID != wilayahA.ID {
+				t.Errorf("expected wilayah_id %d, got %d", wilayahA.ID, item.WilayahID)
+			}
+		}
+	})
+
+	t.Run("5. Filter Tanggal (start_date & end_date)", func(t *testing.T) {
+		startDate := lap2.CreatedAt.Format("2006-01-02")
+		endDate := lap3.CreatedAt.Format("2006-01-02")
+		q := fmt.Sprintf("?start_date=%s&end_date=%s", startDate, endDate)
+		_, respDate := callAPI("super_admin", superAdmin.ID, q)
+		for _, item := range respDate.Data {
+			if item.CreatedAt.Before(lap2.CreatedAt.Truncate(24 * time.Hour)) {
+				t.Errorf("item created_at %v is before start_date %v", item.CreatedAt, startDate)
+			}
+		}
+	})
+
+	t.Run("6. Pencarian (Judul, Tipe Kerusakan, Numeric ID)", func(t *testing.T) {
+		// Cari berdasarkan tipe kerusakan
+		_, respTipe := callAPI("super_admin", superAdmin.ID, "?search=Amblas")
+		foundAmblas := false
+		for _, item := range respTipe.Data {
+			if item.ID == lap3.ID {
+				foundAmblas = true
+			}
+		}
+		if !foundAmblas {
+			t.Errorf("search=Amblas should return report lap3 (ID %d)", lap3.ID)
+		}
+
+		// Cari berdasarkan ID langsung
+		qID := fmt.Sprintf("?search=%d", lap1.ID)
+		_, respID := callAPI("super_admin", superAdmin.ID, qID)
+		if len(respID.Data) == 0 || respID.Data[0].ID != lap1.ID {
+			t.Errorf("search=%d should return report lap1", lap1.ID)
+		}
+	})
+
+	t.Run("7. Sorting Deterministic (newest/terbaru vs oldest/terlama)", func(t *testing.T) {
+		_, respNewest := callAPI("super_admin", superAdmin.ID, "?sort_by=newest")
+		if len(respNewest.Data) >= 2 {
+			if respNewest.Data[0].CreatedAt.Before(respNewest.Data[1].CreatedAt) {
+				t.Errorf("sort_by=newest should be DESC")
+			}
+		}
+
+		_, respOldest := callAPI("super_admin", superAdmin.ID, "?sort=terlama")
+		if len(respOldest.Data) >= 2 {
+			if respOldest.Data[0].CreatedAt.After(respOldest.Data[1].CreatedAt) {
+				t.Errorf("sort=terlama should be ASC")
+			}
+		}
+	})
+
+	t.Run("8. Pagination dan Total Data", func(t *testing.T) {
+		_, respPage1 := callAPI("super_admin", superAdmin.ID, "?limit=2&page=1")
+		_, respPage2 := callAPI("super_admin", superAdmin.ID, "?limit=2&page=2")
+
+		if len(respPage1.Data) > 2 {
+			t.Errorf("limit=2 should return at most 2 items, got %d", len(respPage1.Data))
+		}
+		if respPage1.Total < 4 {
+			t.Errorf("totalData should be at least 4, got %d", respPage1.Total)
+		}
+		if len(respPage1.Data) > 0 && len(respPage2.Data) > 0 {
+			if respPage1.Data[0].ID == respPage2.Data[0].ID {
+				t.Errorf("page 1 and page 2 must return different reports")
+			}
+		}
+	})
+
+	t.Run("9. Kombinasi Beberapa Filter", func(t *testing.T) {
+		q := fmt.Sprintf("?status=menunggu&jenis_jalan=desa&severity=ringan&wilayah_id=%d", wilayahA.ID)
+		_, respCombo := callAPI("super_admin", superAdmin.ID, q)
+		if len(respCombo.Data) != 1 || respCombo.Data[0].ID != lap1.ID {
+			t.Errorf("kombinasi filter harus menghasilkan tepat laporan lap1, didapat: %d items", len(respCombo.Data))
+		}
+	})
+
+	t.Run("10. Scope Admin Pemdes dan IDOR Guard", func(t *testing.T) {
+		// Admin Pemdes Desa A hanya bisa melihat laporan di desanya yang bertipe desa
+		_, respPemdes := callAPI("admin_pemdes", adminPemdes.ID, "")
+		for _, item := range respPemdes.Data {
+			if item.WilayahID != wilayahA.ID || item.JenisJalan != "desa" {
+				t.Errorf("Admin Pemdes tidak boleh melihat laporan di luar wilayah desanya: %+v", item)
+			}
+		}
+
+		// Admin Pemdes mencoba memfilter ke wilayah lain -> 403 Forbidden
+		qTamperWilayah := fmt.Sprintf("?wilayah_id=%d", wilayahB.ID)
+		wTamper, _ := callAPI("admin_pemdes", adminPemdes.ID, qTamperWilayah)
+		if wTamper.Code != http.StatusForbidden {
+			t.Errorf("Admin Pemdes memfilter wilayah lain harus 403 Forbidden, got %d", wTamper.Code)
+		}
+
+		// Admin Pemdes mencoba memfilter ke jenis jalan kabupaten -> 403 Forbidden
+		wTamperJalan, _ := callAPI("admin_pemdes", adminPemdes.ID, "?jenis_jalan=kabupaten")
+		if wTamperJalan.Code != http.StatusForbidden {
+			t.Errorf("Admin Pemdes memfilter jenis jalan selain desa harus 403 Forbidden, got %d", wTamperJalan.Code)
+		}
+	})
+
+	t.Run("11. Role Warga Ditolak (403)", func(t *testing.T) {
+		wWarga, _ := callAPI("warga", wargaUser.ID, "")
+		if wWarga.Code != http.StatusForbidden {
+			t.Errorf("Role warga harus 403 Forbidden, got %d", wWarga.Code)
+		}
+	})
 }
