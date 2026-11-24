@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"backend-jalan-rusak/config"
 	"backend-jalan-rusak/models"
@@ -13,19 +14,21 @@ import (
 )
 
 type MapPoint struct {
-	ID            uint    `json:"id"`
-	Judul         string  `json:"judul"`
-	Latitude      float64 `json:"latitude"`
-	Longitude     float64 `json:"longitude"`
-	Status        string  `json:"status"`
-	Severity      string  `json:"severity"`
-	TipeKerusakan string  `json:"tipe_kerusakan"`
-	JenisJalan    string  `json:"jenis_jalan"`
-	ImageURL      string  `json:"image_url"`
-	FotoBukti     string  `json:"foto_bukti"`
-	CatatanAdmin  string  `json:"catatan_admin"`
-	Name          string  `json:"name"`
-	WilayahID     uint    `json:"wilayah_id"`
+	ID            uint      `json:"id"`
+	Judul         string    `json:"judul"`
+	Latitude      float64   `json:"latitude"`
+	Longitude     float64   `json:"longitude"`
+	Status        string    `json:"status"`
+	Severity      string    `json:"severity"`
+	TipeKerusakan string    `json:"tipe_kerusakan"`
+	JenisJalan    string    `json:"jenis_jalan"`
+	ImageURL      string    `json:"image_url"`
+	FotoBukti     string    `json:"foto_bukti"`
+	CatatanAdmin  string    `json:"catatan_admin"`
+	Name          string    `json:"name"`
+	WilayahID     uint      `json:"wilayah_id"`
+	WilayahNama   string    `json:"wilayah_nama"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 func GetMapLaporan(c *gin.Context) {
@@ -41,6 +44,48 @@ func GetMapLaporan(c *gin.Context) {
 			})
 			return
 		}
+	}
+
+	status := strings.ToLower(strings.TrimSpace(c.Query("status")))
+	if status != "" && status != "all" {
+		switch status {
+		case "menunggu", "proses", "selesai", "ditolak":
+			// valid
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  "error",
+				"message": "Parameter status tidak valid. Gunakan 'menunggu', 'proses', 'selesai', atau 'ditolak'",
+			})
+			return
+		}
+	}
+
+	jenisJalan := strings.ToLower(strings.TrimSpace(c.Query("jenis_jalan")))
+	if jenisJalan != "" && jenisJalan != "all" {
+		switch jenisJalan {
+		case "desa", "kabupaten", "provinsi", "nasional":
+			// valid
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  "error",
+				"message": "Parameter jenis_jalan tidak valid. Gunakan 'desa', 'kabupaten', 'provinsi', atau 'nasional'",
+			})
+			return
+		}
+	}
+
+	wIDStr := strings.TrimSpace(c.Query("wilayah_id"))
+	var filterWilayahID uint
+	if wIDStr != "" && wIDStr != "all" {
+		wID, err := strconv.ParseUint(wIDStr, 10, 32)
+		if err != nil || wID == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  "error",
+				"message": "Parameter wilayah_id tidak valid",
+			})
+			return
+		}
+		filterWilayahID = uint(wID)
 	}
 
 	if config.DB == nil {
@@ -102,9 +147,12 @@ func GetMapLaporan(c *gin.Context) {
 			laporan_kerusakan.foto_bukti,
 			laporan_kerusakan.catatan_admin,
 			COALESCE(user.name, 'Warga') as name,
-			laporan_kerusakan.wilayah_id
+			laporan_kerusakan.wilayah_id,
+			COALESCE(wilayah.nama, '') as wilayah_nama,
+			laporan_kerusakan.created_at
 		`).
 		Joins("LEFT JOIN user ON user.id = laporan_kerusakan.user_id AND user.deleted_at IS NULL").
+		Joins("LEFT JOIN wilayah ON wilayah.id = laporan_kerusakan.wilayah_id AND wilayah.deleted_at IS NULL").
 		Where("laporan_kerusakan.deleted_at IS NULL")
 
 	switch role {
@@ -127,6 +175,22 @@ func GetMapLaporan(c *gin.Context) {
 			return
 		}
 
+		if filterWilayahID > 0 && filterWilayahID != *adminUser.WilayahID {
+			c.JSON(http.StatusForbidden, gin.H{
+				"status":  "error",
+				"message": "Admin Pemdes tidak dapat mengakses wilayah di luar kewenangannya",
+			})
+			return
+		}
+
+		if jenisJalan != "" && jenisJalan != "all" && jenisJalan != "desa" {
+			c.JSON(http.StatusForbidden, gin.H{
+				"status":  "error",
+				"message": "Admin Pemdes hanya memiliki kewenangan pada jalan desa",
+			})
+			return
+		}
+
 		query = query.Where(
 			"laporan_kerusakan.wilayah_id = ? AND laporan_kerusakan.jenis_jalan = ?",
 			*adminUser.WilayahID,
@@ -135,24 +199,20 @@ func GetMapLaporan(c *gin.Context) {
 
 	case string(models.RoleAdminPu):
 		// PU-5.1: Admin PU memonitor seluruh kewenangan jalan (Desa, Kabupaten, Provinsi, Nasional)
-		if jenisJalan := strings.ToLower(strings.TrimSpace(c.Query("jenis_jalan"))); jenisJalan != "" && jenisJalan != "all" {
+		if jenisJalan != "" && jenisJalan != "all" {
 			query = query.Where("laporan_kerusakan.jenis_jalan = ?", jenisJalan)
 		}
-		if wIDStr := strings.TrimSpace(c.Query("wilayah_id")); wIDStr != "" {
-			if wID, err := strconv.ParseUint(wIDStr, 10, 32); err == nil && wID > 0 {
-				query = query.Where("laporan_kerusakan.wilayah_id = ?", uint(wID))
-			}
+		if filterWilayahID > 0 {
+			query = query.Where("laporan_kerusakan.wilayah_id = ?", filterWilayahID)
 		}
 
 	case string(models.RoleSuperAdmin):
 		// Superadmin melihat seluruh laporan aktif
-		if jenisJalan := strings.ToLower(strings.TrimSpace(c.Query("jenis_jalan"))); jenisJalan != "" && jenisJalan != "all" {
+		if jenisJalan != "" && jenisJalan != "all" {
 			query = query.Where("laporan_kerusakan.jenis_jalan = ?", jenisJalan)
 		}
-		if wIDStr := strings.TrimSpace(c.Query("wilayah_id")); wIDStr != "" {
-			if wID, err := strconv.ParseUint(wIDStr, 10, 32); err == nil && wID > 0 {
-				query = query.Where("laporan_kerusakan.wilayah_id = ?", uint(wID))
-			}
+		if filterWilayahID > 0 {
+			query = query.Where("laporan_kerusakan.wilayah_id = ?", filterWilayahID)
 		}
 
 	default:
@@ -164,7 +224,7 @@ func GetMapLaporan(c *gin.Context) {
 	}
 
 	// Filter berdasarkan status jika dikirim
-	if status := strings.ToLower(strings.TrimSpace(c.Query("status"))); status != "" {
+	if status != "" && status != "all" {
 		query = query.Where(
 			"laporan_kerusakan.status = ?",
 			status,
@@ -194,7 +254,7 @@ func GetMapLaporan(c *gin.Context) {
 
 	validPoints := make([]MapPoint, 0)
 	for _, p := range rawPoints {
-		if !utils.IsValidCoordinate(p.Latitude, p.Longitude) {
+		if !utils.IsValidCoordinate(p.Latitude, p.Longitude) || (p.Latitude == 0 && p.Longitude == 0) {
 			continue
 		}
 		if p.Severity == "" {

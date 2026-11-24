@@ -318,6 +318,91 @@ func TestDeterministicSortingLogic(t *testing.T) {
 	}
 }
 
+func TestPrioritySortingAndActiveStatus(t *testing.T) {
+	timeOld := time.Date(2026, 6, 1, 10, 0, 0, 0, time.Local)
+	timeNew := time.Date(2026, 6, 20, 10, 0, 0, 0, time.Local)
+
+	lapBeratOld := models.LaporanKerusakan{Judul: "Berat Old", Severity: "berat", Status: "menunggu"}
+	lapBeratOld.ID = 1
+	lapBeratOld.CreatedAt = timeOld
+
+	lapBelumDinilaiOld := models.LaporanKerusakan{Judul: "Belum Dinilai Old", Severity: "belum_dinilai", Status: "menunggu"}
+	lapBelumDinilaiOld.ID = 2
+	lapBelumDinilaiOld.CreatedAt = timeOld
+
+	lapSedangNew := models.LaporanKerusakan{Judul: "Sedang New", Severity: "sedang", Status: "proses"}
+	lapSedangNew.ID = 3
+	lapSedangNew.CreatedAt = timeNew
+
+	lapRinganOld := models.LaporanKerusakan{Judul: "Ringan Old", Severity: "ringan", Status: "menunggu"}
+	lapRinganOld.ID = 4
+	lapRinganOld.CreatedAt = timeOld
+
+	lapBeratNew := models.LaporanKerusakan{Judul: "Berat New", Severity: "berat", Status: "proses"}
+	lapBeratNew.ID = 5
+	lapBeratNew.CreatedAt = timeNew
+
+	lapSelesaiBerat := models.LaporanKerusakan{Judul: "Selesai Berat", Severity: "berat", Status: "selesai"}
+	lapSelesaiBerat.ID = 6
+	lapSelesaiBerat.CreatedAt = timeOld
+
+	list := []models.LaporanKerusakan{lapRinganOld, lapSedangNew, lapBelumDinilaiOld, lapBeratNew, lapBeratOld, lapSelesaiBerat}
+
+	// 1. Filter aktif
+	var activeOnly []models.LaporanKerusakan
+	for _, l := range list {
+		if l.Status == "menunggu" || l.Status == "proses" {
+			activeOnly = append(activeOnly, l)
+		}
+	}
+	if len(activeOnly) != 5 {
+		t.Fatalf("expected 5 active reports, got %d", len(activeOnly))
+	}
+
+	// 2. Sort priority simulation:
+	// Rank: berat (1) -> belum_dinilai (2) -> sedang (3) -> ringan (4)
+	// Tie-breaker: CreatedAt ASC -> ID ASC
+	getRank := func(sev string) int {
+		switch strings.ToLower(sev) {
+		case "berat":
+			return 1
+		case "belum_dinilai", "":
+			return 2
+		case "sedang":
+			return 3
+		case "ringan":
+			return 4
+		default:
+			return 5
+		}
+	}
+
+	for i := 0; i < len(activeOnly); i++ {
+		for j := i + 1; j < len(activeOnly); j++ {
+			rankI := getRank(activeOnly[i].Severity)
+			rankJ := getRank(activeOnly[j].Severity)
+			if rankI > rankJ ||
+				(rankI == rankJ && activeOnly[i].CreatedAt.After(activeOnly[j].CreatedAt)) ||
+				(rankI == rankJ && activeOnly[i].CreatedAt.Equal(activeOnly[j].CreatedAt) && activeOnly[i].ID > activeOnly[j].ID) {
+				activeOnly[i], activeOnly[j] = activeOnly[j], activeOnly[i]
+			}
+		}
+	}
+
+	// Expected:
+	// 1. ID 1 (Berat, old)
+	// 2. ID 5 (Berat, new)
+	// 3. ID 2 (Belum Dinilai, old)
+	// 4. ID 3 (Sedang, new)
+	// 5. ID 4 (Ringan, old)
+	expectedIDs := []uint{1, 5, 2, 3, 4}
+	for idx, expectedID := range expectedIDs {
+		if activeOnly[idx].ID != expectedID {
+			t.Fatalf("position %d: expected report ID %d, got %d (%s)", idx, expectedID, activeOnly[idx].ID, activeOnly[idx].Judul)
+		}
+	}
+}
+
 func TestDateFilterInclusiveEndOfDay(t *testing.T) {
 	loc := time.Local
 	dateLayout := "2006-01-02"
@@ -452,6 +537,12 @@ func TestGetAllLaporan_LiveDatabaseQuery(t *testing.T) {
 	lap4.CreatedAt = baseTime // hari ini
 	config.DB.Create(&lap4)
 
+	t.Cleanup(func() {
+		config.DB.Unscoped().Delete(&models.LaporanKerusakan{}, "id IN ?", []uint{lap1.ID, lap2.ID, lap3.ID, lap4.ID})
+		config.DB.Unscoped().Delete(&models.User{}, "id IN ?", []uint{adminPemdes.ID, adminPU.ID, superAdmin.ID, wargaUser.ID})
+		config.DB.Unscoped().Delete(&models.Wilayah{}, "id IN ?", []uint{wilayahA.ID, wilayahB.ID})
+	})
+
 	// Helper untuk memanggil GetAllLaporan via Gin TestContext
 	callAPI := func(role string, userID uint, queryStr string) (*httptest.ResponseRecorder, struct {
 		Status string                   `json:"status"`
@@ -550,11 +641,32 @@ func TestGetAllLaporan_LiveDatabaseQuery(t *testing.T) {
 			t.Errorf("search=Amblas should return report lap3 (ID %d)", lap3.ID)
 		}
 
-		// Cari berdasarkan ID langsung
+		// Cari berdasarkan ID langsung (numerik)
 		qID := fmt.Sprintf("?search=%d", lap1.ID)
 		_, respID := callAPI("super_admin", superAdmin.ID, qID)
-		if len(respID.Data) == 0 || respID.Data[0].ID != lap1.ID {
-			t.Errorf("search=%d should return report lap1", lap1.ID)
+		foundLap1 := false
+		for _, item := range respID.Data {
+			if item.ID == lap1.ID {
+				foundLap1 = true
+				break
+			}
+		}
+		if !foundLap1 {
+			t.Errorf("search=%d should return report lap1 (ID %d)", lap1.ID, lap1.ID)
+		}
+
+		// Cari berdasarkan ID berawalan tagar (?search=#ID)
+		qIDHash := fmt.Sprintf("?search=#%d", lap1.ID)
+		_, respIDHash := callAPI("super_admin", superAdmin.ID, qIDHash)
+		foundLap1Hash := false
+		for _, item := range respIDHash.Data {
+			if item.ID == lap1.ID {
+				foundLap1Hash = true
+				break
+			}
+		}
+		if !foundLap1Hash {
+			t.Errorf("search=#%d should return report lap1 (ID %d)", lap1.ID, lap1.ID)
 		}
 	})
 

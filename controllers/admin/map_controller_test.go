@@ -2,6 +2,7 @@ package admin
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"backend-jalan-rusak/config"
 	"backend-jalan-rusak/middlewares"
 	"backend-jalan-rusak/models"
 	"backend-jalan-rusak/utils"
@@ -30,8 +32,8 @@ func filterAdminMapSimulasi(
 		return false, "deleted"
 	}
 
-	// Koordinat tidak valid tidak boleh menjadi marker
-	if !utils.IsValidCoordinate(lap.Latitude, lap.Longitude) {
+	// Koordinat tidak valid atau sentinel (0, 0) tidak boleh menjadi marker
+	if !utils.IsValidCoordinate(lap.Latitude, lap.Longitude) || (lap.Latitude == 0 && lap.Longitude == 0) {
 		return false, "invalid_coordinate"
 	}
 
@@ -93,6 +95,8 @@ func TestMapScope_AdminPemdes(t *testing.T) {
 		{WilayahID: wilayahA, JenisJalan: "desa", Status: "menunggu", Latitude: 95.0, Longitude: 108.3241},
 		// 9. Desa Wilayah A tapi koordinat NaN -> TIDAK BOLEH MUNCUL
 		{WilayahID: wilayahA, JenisJalan: "desa", Status: "menunggu", Latitude: math.NaN(), Longitude: 108.3241},
+		// 10. Desa Wilayah A tapi koordinat sentinel (0, 0) -> TIDAK BOLEH MUNCUL
+		{WilayahID: wilayahA, JenisJalan: "desa", Status: "menunggu", Latitude: 0.0, Longitude: 0.0},
 	}
 
 	var visiblePoints []models.LaporanKerusakan
@@ -203,7 +207,24 @@ func TestMapScope_AdminPemdesTanpaWilayah_FailClosed(t *testing.T) {
 func TestMapHTTP_WargaForbidden(t *testing.T) {
 	t.Setenv("JWT_SECRET", "map_test_secret_12345678901234")
 
-	token, err := utils.GenerateToken(10, "warga@roadis.id", models.RoleWarga, nil)
+	var wargaID uint = 10
+	if config.DB != nil {
+		warga := models.User{
+			Name:         "Warga Map Test",
+			Email:        fmt.Sprintf("warga_map_%d@example.com", time.Now().UnixNano()),
+			Password:     "password123",
+			Role:         models.RoleWarga,
+			TokenVersion: 1,
+		}
+		if err := config.DB.Create(&warga).Error; err == nil {
+			wargaID = warga.ID
+			t.Cleanup(func() {
+				config.DB.Unscoped().Delete(&warga)
+			})
+		}
+	}
+
+	token, err := utils.GenerateToken(wargaID, "warga@roadis.id", models.RoleWarga, nil)
 	if err != nil {
 		t.Fatalf("GenerateToken failed: %v", err)
 	}
@@ -299,6 +320,60 @@ func TestGetMapLaporan_InvalidSeverity(t *testing.T) {
 		t.Fatalf("expected status 400 for invalid severity, got %d. Body: %s", w.Code, w.Body.String())
 	}
 	if !strings.Contains(w.Body.String(), "Parameter severity tidak valid") {
+		t.Fatalf("expected body to contain error message, got: %s", w.Body.String())
+	}
+}
+
+func TestGetMapLaporan_InvalidStatus(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/map/laporan?status=invalid_status", nil)
+	c.Request = req
+	c.Set("role", "admin_pu")
+	c.Set("user_id", uint(1))
+
+	GetMapLaporan(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400 for invalid status, got %d. Body: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "Parameter status tidak valid") {
+		t.Fatalf("expected body to contain error message, got: %s", w.Body.String())
+	}
+}
+
+func TestGetMapLaporan_InvalidJenisJalan(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/map/laporan?jenis_jalan=tol", nil)
+	c.Request = req
+	c.Set("role", "admin_pu")
+	c.Set("user_id", uint(1))
+
+	GetMapLaporan(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400 for invalid jenis_jalan, got %d. Body: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "Parameter jenis_jalan tidak valid") {
+		t.Fatalf("expected body to contain error message, got: %s", w.Body.String())
+	}
+}
+
+func TestGetMapLaporan_InvalidWilayahID(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/map/laporan?wilayah_id=not_a_number", nil)
+	c.Request = req
+	c.Set("role", "admin_pu")
+	c.Set("user_id", uint(1))
+
+	GetMapLaporan(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400 for invalid wilayah_id, got %d. Body: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "Parameter wilayah_id tidak valid") {
 		t.Fatalf("expected body to contain error message, got: %s", w.Body.String())
 	}
 }

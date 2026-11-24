@@ -82,7 +82,7 @@ func buildAdminLaporanQuery(c *gin.Context) adminLaporanQueryConfig {
 	// Validasi filter status
 	if statusFilter != "" && statusFilter != "all" {
 		switch statusFilter {
-		case "menunggu", "proses", "selesai", "ditolak":
+		case "menunggu", "proses", "selesai", "ditolak", "aktif", "active":
 			// valid
 		default:
 			return adminLaporanQueryConfig{
@@ -163,6 +163,14 @@ func buildAdminLaporanQuery(c *gin.Context) adminLaporanQueryConfig {
 		orderClause = "laporan_kerusakan.created_at DESC, laporan_kerusakan.id DESC"
 	case "oldest", "terlama":
 		orderClause = "laporan_kerusakan.created_at ASC, laporan_kerusakan.id ASC"
+	case "priority", "prioritas":
+		orderClause = `CASE 
+			WHEN laporan_kerusakan.severity = 'berat' THEN 1 
+			WHEN laporan_kerusakan.severity = 'belum_dinilai' OR laporan_kerusakan.severity IS NULL OR laporan_kerusakan.severity = '' THEN 2 
+			WHEN laporan_kerusakan.severity = 'sedang' THEN 3 
+			WHEN laporan_kerusakan.severity = 'ringan' THEN 4 
+			ELSE 5 
+		END ASC, laporan_kerusakan.created_at ASC, laporan_kerusakan.id ASC`
 	default:
 		return adminLaporanQueryConfig{
 			StatusCode: http.StatusBadRequest,
@@ -251,7 +259,11 @@ func buildAdminLaporanQuery(c *gin.Context) adminLaporanQueryConfig {
 	}
 
 	if statusFilter != "" && statusFilter != "all" {
-		query = query.Where("laporan_kerusakan.status = ?", statusFilter)
+		if statusFilter == "aktif" || statusFilter == "active" {
+			query = query.Where("laporan_kerusakan.status IN (?)", []string{"menunggu", "proses"})
+		} else {
+			query = query.Where("laporan_kerusakan.status = ?", statusFilter)
+		}
 	}
 
 	if severityFilter != "" && severityFilter != "all" {
